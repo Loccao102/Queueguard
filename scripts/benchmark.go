@@ -59,7 +59,7 @@ func main() {
 				Timeout:   5 * time.Second,
 			}
 
-			for uid := range userChan {
+			for range userChan {
 				req, err := http.NewRequest(http.MethodGet, *targetURL+"/", nil)
 				if err != nil {
 					atomic.AddUint64(&errorCount, 1)
