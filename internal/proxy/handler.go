@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -49,6 +50,20 @@ func WithRateLimiter(limiter *ratelimit.IPRateLimiter) ServerOption {
 	}
 }
 
+// WithDeviceBinding toggles whether tickets are cryptographically locked to the client's device fingerprint.
+func WithDeviceBinding(enabled bool) ServerOption {
+	return func(s *Server) {
+		s.bindDevice = enabled
+	}
+}
+
+// WithPoWDifficulty sets the proof-of-work challenge difficulty (0 = disabled, 3-5 = active).
+func WithPoWDifficulty(diff int) ServerOption {
+	return func(s *Server) {
+		s.powDifficulty = diff
+	}
+}
+
 // Server represents the QueueGuard Reverse Proxy & Traffic Shaper engine.
 type Server struct {
 	targetURL        *url.URL
@@ -61,6 +76,9 @@ type Server struct {
 	pathMatcher      *PathMatcher
 	ipLimiter        *ratelimit.IPRateLimiter
 	startTime        time.Time
+	bindDevice       bool
+	powDifficulty    int
+	powController    *crypto.PoWController
 
 	// Internal metrics
 	metricsTotalRequests    uint64
@@ -95,10 +113,43 @@ func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer
 		adminToken:       "queueguard-admin-secret",
 		pathMatcher:      NewPathMatcher(nil),
 		startTime:        time.Now(),
+		bindDevice:       true,
+		powDifficulty:    0,
+		powController:    crypto.NewPoWController("queueguard-pow-internal-secret", 5*time.Minute),
 	}
 
 	for _, opt := range opts {
 		opt(s)
+	}
+
+	// Customize response to handle dynamic sliding ticket extension (X-QueueGuard-Extend) from Origin
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		if extendVal := resp.Header.Get("X-QueueGuard-Extend"); extendVal != "" {
+			if duration, err := time.ParseDuration(extendVal); err == nil && duration > 0 {
+				req := resp.Request
+				if cookie, err := req.Cookie(CookieTicket); err == nil && cookie.Value != "" {
+					var devHash string
+					if s.bindDevice {
+						devHash = crypto.ComputeDeviceFingerprint(req.UserAgent(), ratelimit.ExtractIP(req))
+					}
+					if ticket, err := s.signer.VerifyWithDevice(cookie.Value, devHash); err == nil {
+						newToken, _, err := s.signer.IssueTTL(ticket.SessionID, ticket.QueueNumber, devHash, duration)
+						if err == nil {
+							newCookie := &http.Cookie{
+								Name:     CookieTicket,
+								Value:    newToken,
+								Path:     "/",
+								MaxAge:   int(duration.Seconds()),
+								HttpOnly: false,
+								SameSite: http.SameSiteLaxMode,
+							}
+							resp.Header.Add("Set-Cookie", newCookie.String())
+						}
+					}
+				}
+			}
+		}
+		return nil
 	}
 
 	return s, nil
@@ -121,46 +172,63 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Admin endpoints (Dashboard UI & Control API)
+	// 3. PoW Challenge endpoint
+	if r.URL.Path == "/queueguard/pow/challenge" {
+		diff := s.powDifficulty
+		if diff <= 0 {
+			diff = 3
+		}
+		ch, token := s.powController.Generate(diff)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"challenge":  token,
+			"seed":       ch.Seed,
+			"difficulty": ch.Difficulty,
+			"expires_at": ch.ExpiresAt,
+		})
+		return
+	}
+
+	// 4. Admin endpoints (Dashboard UI & Control API)
 	if r.URL.Path == "/queueguard/admin" || strings.HasPrefix(r.URL.Path, "/queueguard/api/admin/") {
 		s.handleAdmin(w, r)
 		return
 	}
 
-	// 4. SSE position stream
+	// 5. SSE position stream
 	if r.URL.Path == "/queueguard/sse" {
 		s.handleSSE(w, r)
 		return
 	}
 
-	// 5. Status query endpoint
+	// 6. Status query endpoint
 	if r.URL.Path == "/queueguard/status" {
 		s.handleStatus(w, r)
 		return
 	}
 
-	// 6. Check path whitelist / static assets
+	// 7. Check path whitelist / static assets
 	if s.pathMatcher != nil && s.pathMatcher.ShouldBypass(r.URL.Path) {
 		atomic.AddUint64(&s.metricsBypassedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 7. Check if bypass mode is actively enabled
+	// 8. Check if bypass mode is actively enabled
 	if s.waitingRoom.IsBypass() {
 		atomic.AddUint64(&s.metricsBypassedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 8. Check if request holds a cryptographically valid admission ticket
+	// 9. Check if request holds a cryptographically valid admission ticket
 	if s.hasValidTicket(r) {
 		atomic.AddUint64(&s.metricsAdmittedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 9. Client has no ticket. Check IP rate limit for new queue enrollments
+	// 10. Client has no ticket. Check IP rate limit for new queue enrollments
 	clientIP := ratelimit.ExtractIP(r)
 	if s.ipLimiter != nil && !s.ipLimiter.Allow(clientIP) {
 		atomic.AddUint64(&s.metricsLimitedRequests, 1)
@@ -174,7 +242,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 10. User has no ticket. Identify session
+	// 11. Check Proof-of-Work Challenge if active
+	if s.powDifficulty > 0 {
+		powToken := r.Header.Get("X-QueueGuard-PoW-Token")
+		powNonce := r.Header.Get("X-QueueGuard-PoW-Nonce")
+		if powToken == "" || powNonce == "" {
+			powToken = r.URL.Query().Get("pow_token")
+			powNonce = r.URL.Query().Get("pow_nonce")
+		}
+
+		if powToken == "" || powNonce == "" || s.powController.Verify(powToken, powNonce) != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":     "pow_required",
+				"message":   "Proof of work challenge required to enter queue",
+				"challenge": "/queueguard/pow/challenge",
+			})
+			return
+		}
+	}
+
+	// 12. User has no ticket. Identify session
 	sessionID := s.getOrCreateSessionID(w, r)
 
 	// Enroll session in waiting room (idempotent across F5)
@@ -183,6 +272,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Check if turnstile has already reached this ticket number
 	admitted, pos, estSec, token, err := s.waitingRoom.CheckStatus(sessionID)
 	if err == nil && admitted && token != "" {
+		if s.bindDevice {
+			devHash := crypto.ComputeDeviceFingerprint(r.UserAgent(), clientIP)
+			if tokenWithDev, _, err := s.signer.IssueWithDevice(sessionID, sess.TicketNumber, devHash); err == nil {
+				token = tokenWithDev
+			}
+		}
 		// User is admitted! Set ticket cookie and forward to origin
 		http.SetCookie(w, &http.Cookie{
 			Name:     CookieTicket,
@@ -222,21 +317,38 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hasValidTicket(r *http.Request) bool {
-	// Check Cookie
-	if cookie, err := r.Cookie(CookieTicket); err == nil && cookie.Value != "" {
-		if _, err := s.signer.Verify(cookie.Value); err == nil {
-			return true
-		}
+	sessionCookie, err := r.Cookie(CookieSession)
+	if err != nil || sessionCookie.Value == "" {
+		return false
 	}
 
-	// Check Header
-	if headerVal := r.Header.Get(HeaderTicket); headerVal != "" {
-		if _, err := s.signer.Verify(headerVal); err == nil {
+	var devHash string
+	if s.bindDevice {
+		devHash = crypto.ComputeDeviceFingerprint(r.UserAgent(), ratelimit.ExtractIP(r))
+	}
+
+	for _, token := range []string{
+		cookieValue(r, CookieTicket),
+		r.Header.Get(HeaderTicket),
+	} {
+		if token == "" {
+			continue
+		}
+		ticket, err := s.signer.VerifyWithDevice(token, devHash)
+		if err == nil && subtle.ConstantTimeCompare([]byte(ticket.SessionID), []byte(sessionCookie.Value)) == 1 {
 			return true
 		}
 	}
 
 	return false
+}
+
+func cookieValue(r *http.Request, name string) string {
+	cookie, err := r.Cookie(name)
+	if err != nil {
+		return ""
+	}
+	return cookie.Value
 }
 
 func (s *Server) getOrCreateSessionID(w http.ResponseWriter, r *http.Request) string {
@@ -254,7 +366,7 @@ func (s *Server) getOrCreateSessionID(w http.ResponseWriter, r *http.Request) st
 		Value:    sessionID,
 		Path:     "/",
 		MaxAge:   86400, // 24 hours
-		HttpOnly: false,
+		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -283,7 +395,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	admitted, pos, estSec, token, err := s.waitingRoom.CheckStatus(sessionID)
+	admitted, pos, estSec, _, err := s.waitingRoom.CheckStatus(sessionID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
@@ -295,6 +407,5 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"admitted":    admitted,
 		"position":    pos,
 		"est_seconds": estSec,
-		"token":       token,
 	})
 }

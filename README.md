@@ -74,6 +74,14 @@ flowchart TD
    * Trước giờ mở bán, người dùng nhìn thấy đồng hồ đếm ngược (Pre-Queue). Đúng giờ mở bán, hệ thống tự động xáo trộn ngẫu nhiên (Fisher-Yates Shuffle) vị trí vé, triệt tiêu 100% tình trạng bot cắm trại cướp số 1 lúc 00:00:00.001.
 10. **Cụm Phân Tán Đa Node (Distributed Redis Engine Interface)**:
     * Trừu tượng hóa `Engine` interface: chạy In-Memory (mặc định 0 dependency) hoặc Redis phân tán (khi có `REDIS_URL`) để scale ngang nhiều container QueueGuard sau Load Balancer.
+11. **Khóa Vé Theo Thiết Bị & Mạng (Anti-Scalper Device Binding)**:
+    * Tự động ràng buộc chữ ký số vé với chuỗi hash thiết bị `User-Agent + Client-IP`. Ngăn chặn triệt để hành vi phe vé (scalpers) xếp hàng lấy cookie bán lại trên chợ đen.
+12. **Thử Thách Giải Toán Chống Bot Không Lưu Trạng Thái (Stateless Proof-of-Work)**:
+    * Hỗ trợ cơ chế Client-side PoW SHA-256 (`POW_DIFFICULTY`). Buộc client tiêu tốn CPU tìm nonce hợp lệ trước khi được cấp vé xếp hàng, vô hiệu hóa mạng botnet phân tán.
+13. **Gia Hạn Vé Động Từ Origin (Dynamic Sliding Ticket Extension)**:
+    * Máy chủ gốc có thể chủ động trả về response header `X-QueueGuard-Extend: 5m` khi người dùng đang thực hiện thanh toán/checkout, tự động làm mới TTL vé an toàn.
+14. **Chuông Báo Âm Thanh & Thông Báo Desktop (Web Audio & Notifications)**:
+    * Hàng chờ tích hợp Web Audio API tự tổng hợp chuông báo âm thanh nhẹ nhàng cùng Web Notification API nhắc nhở người dùng ngay khi đến lượt mà không cần tài nguyên âm thanh ngoài.
 
 ---
 
@@ -206,6 +214,8 @@ go run ./scripts/benchmark.go -url http://localhost:8000 -users 1000 -concurrenc
 | `IP_RATE_BURST` | `20` | Giới hạn lượng request dồn dập (burst) tối đa từ 1 IP |
 | `EVENT_START_TIME` | `""` | Thời gian mở bán sự kiện định dạng RFC3339 (kích hoạt Pre-Queue) |
 | `REDIS_URL` | `""` | Địa chỉ Redis để chạy cụm phân tán nhiều container (vd: `localhost:6379`) |
+| `BIND_DEVICE` | `true` | Ràng buộc chữ ký vé với User-Agent & IP client để chống mua bán cookie |
+| `POW_DIFFICULTY` | `0` | Độ khó giải bài toán Proof-of-Work SHA-256 (0: tắt, 3-4: chống bot cao) |
 
 ---
 

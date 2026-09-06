@@ -52,7 +52,7 @@ func DefaultConfig() Config {
 // token-bucket discharge, and SSE position broadcasting.
 type WaitingRoom struct {
 	config   Config
-	sequence *SequenceController
+	sequence Engine
 	signer   *crypto.Signer
 	preQueue *PreQueueManager
 
@@ -70,16 +70,24 @@ type WaitingRoom struct {
 
 // NewWaitingRoom constructs an initialized WaitingRoom.
 func NewWaitingRoom(cfg Config, signer *crypto.Signer) *WaitingRoom {
+	return NewWaitingRoomWithEngine(cfg, signer, NewSequenceController())
+}
+
+// NewWaitingRoomWithEngine constructs a waiting room with the supplied sequence engine.
+func NewWaitingRoomWithEngine(cfg Config, signer *crypto.Signer, engine Engine) *WaitingRoom {
 	if cfg.DischargeRatePerSec == 0 {
 		cfg.DischargeRatePerSec = 20
 	}
 	if cfg.SessionIdleTimeout == 0 {
 		cfg.SessionIdleTimeout = 60 * time.Second
 	}
+	if engine == nil {
+		engine = NewSequenceController()
+	}
 
 	return &WaitingRoom{
 		config:      cfg,
-		sequence:    NewSequenceController(),
+		sequence:    engine,
 		signer:      signer,
 		preQueue:    NewPreQueueManager(cfg.EventStartTime),
 		subscribers: make(map[chan struct{}]struct{}),
@@ -313,7 +321,7 @@ func (wr *WaitingRoom) IsBypass() bool {
 	return atomic.LoadUint32(&wr.bypass) == 1
 }
 
-func (wr *WaitingRoom) Sequence() *SequenceController {
+func (wr *WaitingRoom) Sequence() Engine {
 	return wr.sequence
 }
 

@@ -6,16 +6,17 @@ Tài liệu này tổng hợp toàn bộ các tính năng tiềm năng, kiến t
 
 ## 🧭 Ma Trận Ưu Tiên Phát Triển (Feature Priority Matrix)
 
-| Mức Độ | Tính Năng | Mô Tả Tóm Tắt | Lợi Ích Cốt Lõi |
-| :---: | :--- | :--- | :--- |
-| **P0 (Cao)** | **CAPTCHA & Proof-of-Work (PoW)** | Buộc client giải toán SHA-256 hoặc xác thực Cloudflare Turnstile | Triệt tiêu 99.9% botnet quy mô lớn trước khi vào hàng |
-| **P0 (Cao)** | **Ràng Buộc Vé Chống Bán Lại (Device Binding)** | Khóa vé theo Device Fingerprint / Hash User-Agent + IP subnet | Ngăn chặn nạn đầu cơ, mua gom và chuyển nhượng vé |
-| **P1 (Trung)** | **Hỗ Trợ Đa Phòng Chờ (Multi-Room Routing)** | Cấu hình nhiều phòng chờ độc lập (`/vip`, `/regular`, `/flashsale`) | Phục vụ các sự kiện có nhiều phân khúc vé và URL khác nhau |
-| **P1 (Trung)** | **Tùy Biến Giao Diện Thương Hiệu (Whitelabel / Theme)** | Cho phép cấu hình Logo, màu sắc, i18n đa ngôn ngữ, nhúng Video | Nâng cao trải nghiệm người dùng, hiển thị quảng cáo tài trợ |
-| **P1 (Trung)** | **Desktop / Sound Notification API** | Chuông báo âm thanh và Web Push khi đến lượt vào web | Tránh tình trạng khách bỏ quên tab dẫn đến hết hạn vé |
-| **P2 (Dài hạn)** | **Grafana Dashboard Template & OpenTelemetry** | File JSON mẫu cho Grafana và OTel Tracing | Quan sát chi tiết độ trễ, phân bố địa lý của hàng chờ |
-| **P2 (Dài hạn)** | **Kubernetes Helm Chart & Operator** | Triển khai 1-click lên Kubernetes kèm HPA tự động scale | Sẵn sàng cho môi trường hạ tầng Cloud Native (EKS, GKE, AKS) |
-| **P2 (Dài hạn)** | **WASM Envoy / Cloudflare Filter** | Đưa logic xác thực vé ra chạy tại CDN Edge bằng WebAssembly | Giảm tải 100% cho origin khi vé chưa hợp lệ |
+| Mức Độ | Tính Năng | Mô Tả Tóm Tắt | Lợi Ích Cốt Lõi | Trạng Thái |
+| :---: | :--- | :--- | :--- | :---: |
+| **P0 (Cao)** | **CAPTCHA & Proof-of-Work (PoW)** | Buộc client giải toán SHA-256 hoặc xác thực Cloudflare Turnstile | Triệt tiêu 99.9% botnet quy mô lớn trước khi vào hàng | ✅ Hoàn thành |
+| **P0 (Cao)** | **Ràng Buộc Vé Chống Bán Lại (Device Binding)** | Khóa vé theo Device Fingerprint / Hash User-Agent + IP subnet | Ngăn chặn nạn đầu cơ, mua gom và chuyển nhượng vé | ✅ Hoàn thành |
+| **P1 (Trung)** | **Gia Hạn Vé Động (Sliding Window Extension)** | Hỗ trợ header `X-QueueGuard-Extend` từ origin kéo dài TTL vé | Đảm bảo không đứt quãng luồng thanh toán / checkout | ✅ Hoàn thành |
+| **P1 (Trung)** | **Desktop & Sound Notification API** | Chuông báo âm thanh Web Audio và Web Push khi đến lượt vào web | Tránh tình trạng khách bỏ quên tab dẫn đến hết hạn vé | ✅ Hoàn thành |
+| **P1 (Trung)** | **Hỗ Trợ Đa Phòng Chờ (Multi-Room Routing)** | Cấu hình nhiều phòng chờ độc lập (`/vip`, `/regular`, `/flashsale`) | Phục vụ các sự kiện có nhiều phân khúc vé và URL khác nhau | ⏳ Milestone 4 |
+| **P1 (Trung)** | **Tùy Biến Giao Diện Thương Hiệu (Whitelabel / Theme)** | Cho phép cấu hình Logo, màu sắc, i18n đa ngôn ngữ, nhúng Video | Nâng cao trải nghiệm người dùng, hiển thị quảng cáo tài trợ | ⏳ Milestone 4 |
+| **P2 (Dài hạn)** | **Grafana Dashboard Template & OpenTelemetry** | File JSON mẫu cho Grafana và OTel Tracing | Quan sát chi tiết độ trễ, phân bố địa lý của hàng chờ | ⏳ Milestone 4 |
+| **P2 (Dài hạn)** | **Kubernetes Helm Chart & Operator** | Triển khai 1-click lên Kubernetes kèm HPA tự động scale | Sẵn sàng cho môi trường hạ tầng Cloud Native (EKS, GKE, AKS) | ⏳ Milestone 4 |
+| **P2 (Dài hạn)** | **WASM Envoy / Cloudflare Filter** | Đưa logic xác thực vé ra chạy tại CDN Edge bằng WebAssembly | Giảm tải 100% cho origin khi vé chưa hợp lệ | ⏳ Milestone 5 |
 
 ---
 
@@ -136,14 +137,14 @@ timeline
                              : Distributed Redis Engine
                              : CI/CD GitHub Actions
                              : Makefile CLI
-    Milestone 3 (Kế tiếp)    : Proof-of-Work Anti-Bot
+    Milestone 3 (Hoàn thành) : Proof-of-Work Anti-Bot
                              : Device & IP Binding
                              : Ticket Sliding Extension
                              : Desktop/Sound Notifications
-    Milestone 4 (Doanh nghiệp) : Multi-Room Support
-                               : Custom Whitelabel Theming
-                               : Grafana Dashboard JSON
-                               : Kubernetes Helm Chart
+    Milestone 4 (Kế tiếp)    : Multi-Room Support
+                             : Custom Whitelabel Theming
+                             : Grafana Dashboard JSON
+                             : Kubernetes Helm Chart
 ```
 
 ---
@@ -153,3 +154,4 @@ timeline
 2. Tạo nhánh tính năng (`git checkout -b feature/amazing-feature`).
 3. Đảm bảo chạy pass toàn bộ test suite (`make test`).
 4. Tạo Pull Request mô tả chi tiết giải pháp.
+

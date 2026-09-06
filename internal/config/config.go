@@ -19,6 +19,8 @@ type AppConfig struct {
 	IPRateBurst         int // maximum burst allowance
 	EventStartTime      time.Time
 	RedisURL            string
+	BindDevice          bool
+	PoWDifficulty       int // 0 = disabled, 3-5 = active difficulty
 }
 
 func Load() *AppConfig {
@@ -61,6 +63,11 @@ func Load() *AppConfig {
 	ipLimit := getEnvInt("IP_RATE_LIMIT", 60)
 	ipBurst := getEnvInt("IP_RATE_BURST", 20)
 
+	bindDeviceStr := getEnv("BIND_DEVICE", "true")
+	bindDevice := bindDeviceStr != "false" && bindDeviceStr != "0"
+
+	powDifficulty := getEnvInt("POW_DIFFICULTY", 0)
+
 	return &AppConfig{
 		Port:                port,
 		OriginURL:           originURL,
@@ -73,6 +80,8 @@ func Load() *AppConfig {
 		IPRateBurst:         ipBurst,
 		EventStartTime:      eventStartTime,
 		RedisURL:            redisURL,
+		BindDevice:          bindDevice,
+		PoWDifficulty:       powDifficulty,
 	}
 }
 

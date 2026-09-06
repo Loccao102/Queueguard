@@ -16,6 +16,7 @@ var (
 	ErrInvalidTicket   = errors.New("invalid admission ticket format")
 	ErrSignatureFailed = errors.New("ticket signature verification failed")
 	ErrTicketExpired   = errors.New("admission ticket has expired")
+	ErrDeviceMismatch  = errors.New("admission ticket device fingerprint mismatch")
 )
 
 // AdmissionTicket represents a cryptographically verifiable pass granted to a client
@@ -23,8 +24,21 @@ var (
 type AdmissionTicket struct {
 	SessionID   string `json:"sid"`
 	QueueNumber uint64 `json:"qnum"`
+	DeviceHash  string `json:"dev,omitempty"`
 	IssuedAt    int64  `json:"iat"`
 	ExpiresAt   int64  `json:"exp"`
+}
+
+// ComputeDeviceFingerprint hashes User-Agent and client IP to produce a compact device fingerprint.
+func ComputeDeviceFingerprint(userAgent, clientIP string) string {
+	if userAgent == "" && clientIP == "" {
+		return ""
+	}
+	h := sha256.New()
+	h.Write([]byte(userAgent))
+	h.Write([]byte("|"))
+	h.Write([]byte(clientIP))
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // Signer handles generating and validating admission tickets with HMAC-SHA256.
@@ -46,12 +60,26 @@ func NewSigner(secretKey string, ttl time.Duration) *Signer {
 
 // Issue generates a signed admission ticket token string for a session.
 func (s *Signer) Issue(sessionID string, queueNum uint64) (string, *AdmissionTicket, error) {
+	return s.IssueWithDevice(sessionID, queueNum, "")
+}
+
+// IssueWithDevice generates a signed admission ticket token bound to a device fingerprint.
+func (s *Signer) IssueWithDevice(sessionID string, queueNum uint64, deviceHash string) (string, *AdmissionTicket, error) {
+	return s.IssueTTL(sessionID, queueNum, deviceHash, s.ttl)
+}
+
+// IssueTTL generates a signed admission ticket token with a custom TTL duration.
+func (s *Signer) IssueTTL(sessionID string, queueNum uint64, deviceHash string, customTTL time.Duration) (string, *AdmissionTicket, error) {
+	if customTTL <= 0 {
+		customTTL = s.ttl
+	}
 	now := time.Now()
 	ticket := &AdmissionTicket{
 		SessionID:   sessionID,
 		QueueNumber: queueNum,
+		DeviceHash:  deviceHash,
 		IssuedAt:    now.UnixMilli(),
-		ExpiresAt:   now.Add(s.ttl).UnixMilli(),
+		ExpiresAt:   now.Add(customTTL).UnixMilli(),
 	}
 
 	payloadBytes, err := json.Marshal(ticket)
@@ -68,6 +96,11 @@ func (s *Signer) Issue(sessionID string, queueNum uint64) (string, *AdmissionTic
 
 // Verify validates a signed ticket token string.
 func (s *Signer) Verify(token string) (*AdmissionTicket, error) {
+	return s.VerifyWithDevice(token, "")
+}
+
+// VerifyWithDevice validates a signed ticket token and verifies matching device fingerprint.
+func (s *Signer) VerifyWithDevice(token string, expectedDeviceHash string) (*AdmissionTicket, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
 		return nil, ErrInvalidTicket
@@ -92,6 +125,10 @@ func (s *Signer) Verify(token string) (*AdmissionTicket, error) {
 
 	if time.Now().UnixMilli() > ticket.ExpiresAt {
 		return nil, ErrTicketExpired
+	}
+
+	if expectedDeviceHash != "" && ticket.DeviceHash != "" && ticket.DeviceHash != expectedDeviceHash {
+		return nil, ErrDeviceMismatch
 	}
 
 	return &ticket, nil

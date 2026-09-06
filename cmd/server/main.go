@@ -34,7 +34,20 @@ func main() {
 	wrCfg.DischargeRatePerSec = cfg.DischargeRatePerSec
 	wrCfg.TicketTTL = cfg.TicketTTL
 	wrCfg.EventStartTime = cfg.EventStartTime
-	waitingRoom := queue.NewWaitingRoom(wrCfg, signer)
+
+	var waitingRoom *queue.WaitingRoom
+	var distributedEngine *queue.RedisEngine
+	if cfg.RedisURL != "" {
+		var err error
+		distributedEngine, err = queue.NewRedisEngine(cfg.RedisURL, "queueguard")
+		if err != nil {
+			log.Fatalf("failed to connect to Redis: %v", err)
+		}
+		defer distributedEngine.Close()
+		waitingRoom = queue.NewWaitingRoomWithEngine(wrCfg, signer, distributedEngine)
+	} else {
+		waitingRoom = queue.NewWaitingRoom(wrCfg, signer)
+	}
 
 	// Initialize IP Rate Limiter
 	ipLimiter := ratelimit.NewIPRateLimiter(cfg.IPRateLimit, cfg.IPRateBurst)
@@ -54,6 +67,8 @@ func main() {
 		proxy.WithAdminToken(cfg.AdminToken),
 		proxy.WithBypassPaths(cfg.BypassPaths),
 		proxy.WithRateLimiter(ipLimiter),
+		proxy.WithDeviceBinding(cfg.BindDevice),
+		proxy.WithPoWDifficulty(cfg.PoWDifficulty),
 	)
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize QueueGuard proxy: %v", err)

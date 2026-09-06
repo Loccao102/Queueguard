@@ -91,6 +91,7 @@ func TestProxyInterceptionAndPassThrough(t *testing.T) {
 		Name:  CookieTicket,
 		Value: token,
 	})
+	authedReq.AddCookie(sessionCookie)
 
 	authedResp, err := client.Do(authedReq)
 	if err != nil {
@@ -135,6 +136,73 @@ func TestAPIClientReceives429JSON(t *testing.T) {
 
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 Too Many Requests for API clients without ticket, got: %d", resp.StatusCode)
+	}
+}
+
+func TestTicketCannotBeReusedWithDifferentSession(t *testing.T) {
+	originHits := 0
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wr := queue.NewWaitingRoom(queue.DefaultConfig(), signer)
+	proxyServer, _ := NewServer(originServer.URL, wr, signer)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	token, _, err := signer.Issue("session-a", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/checkout", nil)
+	req.AddCookie(&http.Cookie{Name: CookieSession, Value: "session-b"})
+	req.AddCookie(&http.Cookie{Name: CookieTicket, Value: token})
+	req.Header.Set("Accept", "text/html")
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK || originHits != 0 {
+		t.Fatalf("expected mismatched ticket to remain queued, status=%d origin_hits=%d", resp.StatusCode, originHits)
+	}
+}
+
+func TestStatusDoesNotExposeAdmissionToken(t *testing.T) {
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wr := queue.NewWaitingRoom(queue.DefaultConfig(), signer)
+	proxyServer, _ := NewServer(originServer.URL, wr, signer)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	const sessionID = "session-status"
+	wr.Enroll(sessionID)
+	wr.Sequence().AdvanceAdmission(1)
+
+	req, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/queueguard/status", nil)
+	req.AddCookie(&http.Cookie{Name: CookieSession, Value: sessionID})
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["token"]; exists {
+		t.Fatal("status endpoint must not expose admission token")
 	}
 }
 
@@ -470,5 +538,181 @@ func TestPreQueueCountdownAndFairLottery(t *testing.T) {
 	}
 	if sess.TicketNumber == 0 {
 		t.Fatalf("expected assigned ticket number after lottery, got: %d", sess.TicketNumber)
+	}
+}
+
+func TestDeviceBindingInProxy(t *testing.T) {
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("admitted to origin"))
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wr := queue.NewWaitingRoom(queue.DefaultConfig(), signer)
+
+	proxyServer, _ := NewServer(
+		originServer.URL,
+		wr,
+		signer,
+		WithDeviceBinding(true),
+	)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	ua1 := "Browser-A-MacBook"
+	ip1 := "192.168.1.50"
+	devHash1 := crypto.ComputeDeviceFingerprint(ua1, ip1)
+
+	// Issue device-bound ticket for device 1
+	token, _, err := signer.IssueWithDevice("sess_bound", 1, devHash1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Request with matching device should pass to origin
+	req1, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/", nil)
+	req1.Header.Set("User-Agent", ua1)
+	req1.Header.Set("X-Forwarded-For", ip1)
+	req1.AddCookie(&http.Cookie{Name: CookieSession, Value: "sess_bound"})
+	req1.AddCookie(&http.Cookie{Name: CookieTicket, Value: token})
+
+	resp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body1, _ := io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+	if !strings.Contains(string(body1), "admitted to origin") {
+		t.Fatalf("expected matching device to reach origin, got: %s", string(body1))
+	}
+
+	// 2. Request with DIFFERENT device (scalper resale attempt) should FAIL and hit waiting room
+	req2, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/", nil)
+	req2.Header.Set("User-Agent", "Browser-B-iPhone")
+	req2.Header.Set("X-Forwarded-For", "203.0.113.88")
+	req2.AddCookie(&http.Cookie{Name: CookieSession, Value: "sess_bound"})
+	req2.AddCookie(&http.Cookie{Name: CookieTicket, Value: token})
+
+	resp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if strings.Contains(string(body2), "admitted to origin") {
+		t.Fatal("expected different device to be denied access to origin")
+	}
+}
+
+func TestDynamicTicketSlidingExtension(t *testing.T) {
+	// Origin backend that returns X-QueueGuard-Extend header
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-QueueGuard-Extend", "20m")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("payment processed"))
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wr := queue.NewWaitingRoom(queue.DefaultConfig(), signer)
+
+	proxyServer, _ := NewServer(originServer.URL, wr, signer)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	token, _, _ := signer.Issue("sess_extend", 1)
+
+	req, _ := http.NewRequest(http.MethodPost, proxyHTTP.URL+"/checkout", nil)
+	req.AddCookie(&http.Cookie{Name: CookieSession, Value: "sess_extend"})
+	req.AddCookie(&http.Cookie{Name: CookieTicket, Value: token})
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Verify that Set-Cookie for queueguard_ticket was returned with extended TTL
+	var newTicketCookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == CookieTicket {
+			newTicketCookie = c
+			break
+		}
+	}
+	if newTicketCookie == nil {
+		t.Fatal("expected extended ticket cookie to be set in response")
+	}
+
+	// Verify the new token has the 20m TTL (~1200 seconds)
+	if newTicketCookie.MaxAge != 1200 {
+		t.Fatalf("expected cookie MaxAge to be 1200s (20m), got: %d", newTicketCookie.MaxAge)
+	}
+}
+
+func TestPoWEnforcementInProxy(t *testing.T) {
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wr := queue.NewWaitingRoom(queue.DefaultConfig(), signer)
+
+	proxyServer, _ := NewServer(
+		originServer.URL,
+		wr,
+		signer,
+		WithPoWDifficulty(2), // low difficulty for fast test
+	)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	// 1. Request without PoW should receive 403 pow_required
+	req1, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/", nil)
+	resp1, err := client.Do(req1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp1.Body.Close()
+	if resp1.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden without PoW, got: %d", resp1.StatusCode)
+	}
+
+	// 2. Fetch PoW challenge
+	chResp, err := client.Get(proxyHTTP.URL + "/queueguard/pow/challenge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chData struct {
+		Challenge  string `json:"challenge"`
+		Seed       string `json:"seed"`
+		Difficulty int    `json:"difficulty"`
+	}
+	_ = json.NewDecoder(chResp.Body).Decode(&chData)
+	chResp.Body.Close()
+
+	// 3. Solve the challenge
+	nonce := crypto.SolvePoW(chData.Seed, chData.Difficulty)
+
+	// 4. Request with solved PoW should now be accepted!
+	req2, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/", nil)
+	req2.Header.Set("X-QueueGuard-PoW-Token", chData.Challenge)
+	req2.Header.Set("X-QueueGuard-PoW-Nonce", nonce)
+
+	resp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK after solving PoW, got: %d", resp2.StatusCode)
 	}
 }

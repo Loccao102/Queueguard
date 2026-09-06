@@ -65,3 +65,32 @@ func TestExpiredTicket(t *testing.T) {
 		t.Fatalf("expected ErrTicketExpired, got: %v", err)
 	}
 }
+
+func TestDeviceBinding(t *testing.T) {
+	signer := NewSigner("secret-key", 5*time.Minute)
+
+	ua1 := "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+	ip1 := "192.168.1.100"
+	devHash1 := ComputeDeviceFingerprint(ua1, ip1)
+
+	token, _, err := signer.IssueWithDevice("sess_dev_1", 1, devHash1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Verify with matching device -> should PASS
+	verified, err := signer.VerifyWithDevice(token, devHash1)
+	if err != nil || verified == nil {
+		t.Fatalf("expected matching device to pass, got err=%v", err)
+	}
+
+	// 2. Verify with different device / IP (scalper attempting to sell cookie) -> should FAIL
+	ua2 := "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
+	ip2 := "203.0.113.50"
+	devHash2 := ComputeDeviceFingerprint(ua2, ip2)
+
+	_, err = signer.VerifyWithDevice(token, devHash2)
+	if err != ErrDeviceMismatch {
+		t.Fatalf("expected ErrDeviceMismatch for transferred ticket, got: %v", err)
+	}
+}

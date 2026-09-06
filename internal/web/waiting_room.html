@@ -204,19 +204,8 @@
 
       let initialPosition = null;
 
-      // Extract session ID from cookie
-      function getCookie(name) {
-        const value = `; ${document.cookie}`;
-        const parts = value.split(`; ${name}=`);
-        if (parts.length === 2) return parts.pop().split(';').shift();
-        return '';
-      }
-
-      const sessionId = getCookie('queueguard_session');
-
       // Connect to real-time Server-Sent Events (SSE)
-      const sseUrl = '/queueguard/sse' + (sessionId ? '?session_id=' + encodeURIComponent(sessionId) : '');
-      const eventSource = new EventSource(sseUrl);
+      const eventSource = new EventSource('/queueguard/sse');
 
       eventSource.onmessage = function(e) {
         try {
@@ -254,6 +243,10 @@
             estWaitEl.innerText = 'Đang chuyển hướng...';
             progressBar.style.width = '100%';
             
+            // Trigger audio chime and desktop notification
+            playAdmissionChime();
+            triggerAdmissionNotification();
+
             // Set ticket cookie and redirect to target URL
             if (data.token) {
               document.cookie = `queueguard_ticket=${data.token}; path=/; max-age=600; SameSite=Lax`;
@@ -262,7 +255,7 @@
             eventSource.close();
             setTimeout(function() {
               window.location.reload();
-            }, 600);
+            }, 800);
             return;
           }
 
@@ -297,6 +290,57 @@
       eventSource.onerror = function() {
         console.warn('SSE disconnected, browser will automatically reconnect...');
       };
+
+      // Web Audio API Synthesizer Chime (Zero External Sound Assets)
+      function playAdmissionChime() {
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContext) return;
+          const ctx = new AudioContext();
+          const now = ctx.currentTime;
+          
+          // Two-tone bell chime (E5 -> A5)
+          const notes = [659.25, 880.0];
+          notes.forEach(function(freq, idx) {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now + idx * 0.15);
+            gain.gain.setValueAtTime(0.25, now + idx * 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.15 + 0.4);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(now + idx * 0.15);
+            osc.stop(now + idx * 0.15 + 0.4);
+          });
+        } catch (e) {
+          console.warn('Audio chime playback failed:', e);
+        }
+      }
+
+      // Desktop Web Notification API
+      function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') {
+          Notification.requestPermission().catch(function() {});
+        }
+      }
+
+      function triggerAdmissionNotification() {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification('QueueGuard - Đã đến lượt của bạn!', {
+              body: 'Hệ thống đã mở cửa chào đón bạn. Đang tự động chuyển hướng...',
+              icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🎉</text></svg>'
+            });
+          } catch (e) {
+            console.warn('Desktop notification failed:', e);
+          }
+        }
+      }
+
+      // Auto-prompt permission after slight delay or first user touch/click
+      document.addEventListener('click', requestNotificationPermission, { once: true });
+      setTimeout(requestNotificationPermission, 1500);
     })();
   </script>
 </body>

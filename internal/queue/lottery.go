@@ -110,7 +110,7 @@ func (pq *PreQueueManager) ShouldTriggerLottery() bool {
 
 // ExecuteFairLottery performs a cryptographic Fisher-Yates shuffle on all collected
 // pre-queue participants and assigns each a randomized ticket from 1 to N.
-func (pq *PreQueueManager) ExecuteFairLottery(seq *SequenceController, sessions *sync.Map) int {
+func (pq *PreQueueManager) ExecuteFairLottery(seq Engine, sessions *sync.Map) int {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
