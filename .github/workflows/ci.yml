@@ -36,3 +36,4 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o bin/queueguard-windows-amd64.exe ./cmd/server
           GOOS=darwin GOARCH=arm64 go build -o bin/queueguard-darwin-arm64 ./cmd/server
           ls -la bin/
+
