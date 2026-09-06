@@ -61,9 +61,15 @@ flowchart TD
    * Kẻ tấn công hoặc bot không thể tự sinh vé giả và không thể bypass phòng chờ để spam trực tiếp vào database gốc.
 4. **Kháng F5 & Tải Lại Trang (F5 Resistance)**:
    * Lưu trữ `session_id` an toàn, nếu người dùng lỡ tay bấm F5 hoặc rớt mạng nhẹ, hệ thống nhận diện và **giữ nguyên số thứ tự trong hàng** mà không bị đẩy về cuối.
-5. **Nút Bấm Khẩn Cấp (Emergency Panic Button & Bypass)**:
-   * Hỗ trợ Pause tạm dừng xả vé tức thì nếu database gốc có dấu hiệu quá nhiệt.
-   * Hỗ trợ Bypass Mode mở cửa tự do khi đợt săn vé kết thúc.
+5. **Bảng Điều Khiển Quản Trị Trực Quan & Nút Khẩn Cấp (Admin Dashboard UI)**:
+   * Giao diện Dashboard Dark Mode tại `/queueguard/admin` theo dõi số lượng người đang đợi, tốc độ xả vé, số phiên active thời gian thực.
+   * Kích hoạt **Emergency Pause** lập tức khi database quá tải, chỉnh **Discharge Rate** động và bật **Bypass Mode** mở cửa tự do.
+6. **Định Tuyến Bỏ Qua Hàng Chờ (Path Whitelist & Asset Bypass)**:
+   * Tự động nhận diện và cho qua các tài nguyên tĩnh (`.css`, `.js`, `.png`, `.jpg`, `.svg`, `.ico`, `.woff2`) và các route tùy biến (webhook, health check) mà không bắt người dùng phải xếp hàng.
+7. **Bộ Đệm Giám Sát Chuẩn Prometheus Metrics (`/metrics`)**:
+   * Cung cấp số liệu thời gian thực theo định dạng chuẩn OpenMetrics/Prometheus (`queueguard_queue_depth`, `queueguard_admitted_tickets_total`, `queueguard_active_sessions`, `queueguard_sse_subscribers`) sẵn sàng kết nối Grafana.
+8. **Chống Spam & IP Rate Limiting (Token Bucket)**:
+   * Tích hợp bộ lọc Token Bucket per IP bảo vệ phòng chờ khỏi các đợt bùng nổ bot cào tạo hàng triệu session ảo.
 
 ---
 
@@ -74,6 +80,8 @@ flowchart TD
 docker compose up -d
 ```
 * **QueueGuard Proxy**: Mở tại [http://localhost:8000](http://localhost:8000) (Trang công cộng có phòng chờ bảo vệ).
+* **Admin Dashboard**: Mở tại [http://localhost:8000/queueguard/admin?token=queueguard-admin-secret](http://localhost:8000/queueguard/admin?token=queueguard-admin-secret).
+* **Prometheus Metrics**: Mở tại [http://localhost:8000/metrics](http://localhost:8000/metrics).
 * **Mock Protected Origin**: Chạy nền tại cổng `:8080` (Mô phỏng website bán vé concert).
 
 ### Cách 2: Chạy trực tiếp bằng Golang
@@ -84,6 +92,65 @@ go run ./cmd/mock-origin/main.go
 # Terminal 2: Chạy QueueGuard Reverse Proxy
 go run ./cmd/server/main.go
 ```
+
+---
+
+## 🎛️ Bảng Điều Khiển & API Quản Trị (Admin Control Plane)
+
+QueueGuard tích hợp sẵn giao diện **Admin Dashboard Web UI** và bộ **REST API** điều khiển từ xa:
+
+### 1. Truy cập Web Dashboard
+Mở trình duyệt: [http://localhost:8000/queueguard/admin?token=queueguard-admin-secret](http://localhost:8000/queueguard/admin?token=queueguard-admin-secret)
+* Xem số người đang xếp hàng thời gian thực (tự động cập nhật mỗi 1.5 giây).
+* Bấm nút **🛑 Dừng Xả Vé (Emergency Pause)** khi hệ thống backend quá tải.
+* Kéo thanh trượt để thay đổi **Tốc độ xả vé (1 - 5,000 users/giây)** tức thì không cần restart.
+* Bật **Bypass Mode** mở cửa tự do khi sự kiện kết thúc.
+* Nút **Reset Queue** dọn dẹp hàng chờ về 0.
+
+### 2. Sử dụng REST API (Tích hợp CI/CD & Script tự động)
+Tất cả request cần header `X-Admin-Token: <token>` hoặc `Authorization: Bearer <token>`:
+
+* **Tạm dừng khẩn cấp**:
+  ```bash
+  curl -X POST http://localhost:8000/queueguard/api/admin/pause -H "X-Admin-Token: queueguard-admin-secret"
+  ```
+* **Tiếp tục xả vé**:
+  ```bash
+  curl -X POST http://localhost:8000/queueguard/api/admin/resume -H "X-Admin-Token: queueguard-admin-secret"
+  ```
+* **Thay đổi tốc độ xả**:
+  ```bash
+  curl -X POST "http://localhost:8000/queueguard/api/admin/rate?rate=50" -H "X-Admin-Token: queueguard-admin-secret"
+  ```
+* **Bật chế độ Bypass**:
+  ```bash
+  curl -X POST "http://localhost:8000/queueguard/api/admin/bypass?enabled=true" -H "X-Admin-Token: queueguard-admin-secret"
+  ```
+* **Lấy telemetry chi tiết**:
+  ```bash
+  curl http://localhost:8000/queueguard/api/admin/stats -H "X-Admin-Token: queueguard-admin-secret"
+  ```
+
+---
+
+## 📈 Tích Hợp Prometheus & Grafana
+
+QueueGuard cung cấp endpoint `/metrics` chuẩn định dạng Prometheus text exposition:
+
+```bash
+curl http://localhost:8000/metrics
+```
+
+**Các metric chính**:
+* `queueguard_queue_depth`: Số lượng khách đang đợi trong hàng chờ.
+* `queueguard_last_issued_ticket`: Số vé turnstile mới nhất được cấp.
+* `queueguard_admitted_tickets_total`: Tổng số vé đã được xả vào backend.
+* `queueguard_discharge_rate`: Tốc độ xả vé hiện tại (users/giây).
+* `queueguard_is_paused`: Trạng thái tạm dừng khẩn cấp (1: paused, 0: running).
+* `queueguard_is_bypass`: Trạng thái mở cửa tự do (1: bypass, 0: protected).
+* `queueguard_active_sessions`: Số phiên đang được theo dõi trong bộ nhớ.
+* `queueguard_sse_subscribers`: Số lượng kết nối SSE streaming thời gian thực.
+* `queueguard_http_requests_total`: Bộ đếm requests (total, bypassed, admitted, rate_limited).
 
 ---
 
@@ -99,17 +166,6 @@ go run ./cmd/server/main.go
    * Xem JSON telemetry thời gian thực:
      ```bash
      curl http://localhost:8000/queueguard/status
-     ```
-     Trả về:
-     ```json
-     {
-       "queue_depth": 0,
-       "last_issued": 15,
-       "admitted": 15,
-       "rate": 10,
-       "paused": false,
-       "bypass": false
-     }
      ```
 
 ---
@@ -139,10 +195,15 @@ go run ./scripts/benchmark.go -url http://localhost:8000 -users 1000 -concurrenc
 | `ORIGIN_URL` | `http://localhost:8080` | URL của máy chủ web/API gốc cần bảo vệ |
 | `DISCHARGE_RATE` | `10` | Số lượng người dùng được xả vào web chính mỗi giây |
 | `TICKET_TTL` | `10m` | Thời gian vé vào cổng có hiệu lực trước khi hết hạn |
-| `SECRET_KEY` | `queueguard-secret` | Khóa bí mật dùng để ký chữ ký số HMAC-SHA256 |
+| `SECRET_KEY` | `queueguard-dev-secret-key-change-me` | Khóa bí mật dùng để ký chữ ký số HMAC-SHA256 |
+| `ADMIN_TOKEN` | `queueguard-admin-secret` | Mã bí mật xác thực cho Admin Dashboard & Control API |
+| `BYPASS_PATHS` | `""` | Danh sách định dạng/đường dẫn bỏ qua hàng chờ (vd: `.pdf,/api/webhooks/*`) |
+| `IP_RATE_LIMIT` | `60` | Giới hạn số lượt xin xếp hàng tối đa từ 1 IP trong 1 phút |
+| `IP_RATE_BURST` | `20` | Giới hạn lượng request dồn dập (burst) tối đa từ 1 IP |
 
 ---
 
 ## 📄 Bản Quyền (License)
 Phát hành theo giấy phép mã nguồn mở [MIT License](LICENSE).
 Tự do sử dụng, chỉnh sửa và tích hợp vào các sản phẩm thương mại hoặc đề án tốt nghiệp.
+

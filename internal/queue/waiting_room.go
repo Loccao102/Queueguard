@@ -21,12 +21,12 @@ const (
 
 // Session holds state for a user queued in the waiting room.
 type Session struct {
-	ID            string        `json:"id"`
-	TicketNumber  uint64        `json:"ticket_number"`
-	EnqueuedAt    time.Time     `json:"enqueued_at"`
-	LastHeartbeat int64         `json:"last_heartbeat"` // unix milli
-	Status        SessionStatus `json:"status"`
-	AdmissionToken string       `json:"-"`
+	ID             string        `json:"id"`
+	TicketNumber   uint64        `json:"ticket_number"`
+	EnqueuedAt     time.Time     `json:"enqueued_at"`
+	LastHeartbeat  int64         `json:"last_heartbeat"` // unix milli
+	Status         SessionStatus `json:"status"`
+	AdmissionToken string        `json:"-"`
 }
 
 // Config defines waiting room operational limits and thresholds.
@@ -278,4 +278,31 @@ func (wr *WaitingRoom) IsBypass() bool {
 
 func (wr *WaitingRoom) Sequence() *SequenceController {
 	return wr.sequence
+}
+
+// ActiveSessionsCount counts the number of tracked sessions in memory.
+func (wr *WaitingRoom) ActiveSessionsCount() int {
+	count := 0
+	wr.sessions.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+// SubscribersCount counts the active SSE connections listening to the queue.
+func (wr *WaitingRoom) SubscribersCount() int {
+	wr.subscribersMu.RLock()
+	defer wr.subscribersMu.RUnlock()
+	return len(wr.subscribers)
+}
+
+// Reset flushes all waiting sessions and resets the turnstile sequence counter.
+func (wr *WaitingRoom) Reset() {
+	wr.sequence.Reset()
+	wr.sessions.Range(func(key, _ any) bool {
+		wr.sessions.Delete(key)
+		return true
+	})
+	wr.notifySubscribers()
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Loccao102/queueguard/internal/crypto"
 	"github.com/Loccao102/queueguard/internal/proxy"
 	"github.com/Loccao102/queueguard/internal/queue"
+	"github.com/Loccao102/queueguard/internal/ratelimit"
 )
 
 const banner = "===================================================================\n" +
@@ -34,6 +35,10 @@ func main() {
 	wrCfg.TicketTTL = cfg.TicketTTL
 	waitingRoom := queue.NewWaitingRoom(wrCfg, signer)
 
+	// Initialize IP Rate Limiter
+	ipLimiter := ratelimit.NewIPRateLimiter(cfg.IPRateLimit, cfg.IPRateBurst)
+	defer ipLimiter.Close()
+
 	// Start background token-bucket discharge worker
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -41,7 +46,14 @@ func main() {
 	go waitingRoom.StartDischargeWorker(ctx)
 
 	// Initialize Reverse Proxy
-	proxyServer, err := proxy.NewServer(cfg.OriginURL, waitingRoom, signer)
+	proxyServer, err := proxy.NewServer(
+		cfg.OriginURL,
+		waitingRoom,
+		signer,
+		proxy.WithAdminToken(cfg.AdminToken),
+		proxy.WithBypassPaths(cfg.BypassPaths),
+		proxy.WithRateLimiter(ipLimiter),
+	)
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize QueueGuard proxy: %v", err)
 	}
@@ -58,8 +70,11 @@ func main() {
 	log.Printf("🎯 Forwarding admitted traffic to Origin: %s", cfg.OriginURL)
 	log.Printf("⚡ Admission Discharge Rate: %d users/second", cfg.DischargeRatePerSec)
 	log.Printf("🎟️  Ticket TTL Duration: %v", cfg.TicketTTL)
-	log.Printf("🔍 Health Check URL: http://localhost:%s/queueguard/healthz", cfg.Port)
-	log.Printf("📊 Live Status URL:  http://localhost:%s/queueguard/status", cfg.Port)
+	log.Printf("🚦 IP Rate Limiter: %d req/min (burst %d)", cfg.IPRateLimit, cfg.IPRateBurst)
+	log.Printf("🔍 Health Check URL:    http://localhost:%s/queueguard/healthz", cfg.Port)
+	log.Printf("📊 Live Status URL:     http://localhost:%s/queueguard/status", cfg.Port)
+	log.Printf("⚙️  Admin Dashboard URL: http://localhost:%s/queueguard/admin?token=%s", cfg.Port, cfg.AdminToken)
+	log.Printf("📈 Prometheus Metrics:  http://localhost:%s/metrics", cfg.Port)
 
 	// Graceful shutdown
 	stopChan := make(chan os.Signal, 1)

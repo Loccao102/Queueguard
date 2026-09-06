@@ -25,6 +25,11 @@ services:
       - DISCHARGE_RATE=10
       - TICKET_TTL=10m
       - SECRET_KEY=queueguard-demo-secret-key-2026
+      - ADMIN_TOKEN=queueguard-admin-secret
+      - BYPASS_PATHS=.css,.js,.png,.jpg,.jpeg,.gif,.svg,.ico,/favicon.ico,/robots.txt
+      - IP_RATE_LIMIT=120
+      - IP_RATE_BURST=30
     depends_on:
       - mock-origin
     restart: unless-stopped
+

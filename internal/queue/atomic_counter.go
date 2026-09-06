@@ -80,3 +80,9 @@ func (sc *SequenceController) PositionOf(ticket uint64) uint64 {
 	}
 	return ticket - admitted
 }
+
+// Reset clears the sequence counters back to 0.
+func (sc *SequenceController) Reset() {
+	atomic.StoreUint64(&sc.lastIssued, 0)
+	atomic.StoreUint64(&sc.admitted, 0)
+}

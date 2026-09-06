@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	_ "embed"
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,10 +10,12 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Loccao102/queueguard/internal/crypto"
 	"github.com/Loccao102/queueguard/internal/queue"
+	"github.com/Loccao102/queueguard/internal/ratelimit"
 	"github.com/Loccao102/queueguard/internal/web"
 )
 
@@ -23,17 +25,52 @@ const (
 	HeaderTicket  = "X-QueueGuard-Ticket"
 )
 
+// ServerOption configures the QueueGuard reverse proxy server.
+type ServerOption func(*Server)
+
+// WithAdminToken sets the secret token required for administrative API actions.
+func WithAdminToken(token string) ServerOption {
+	return func(s *Server) {
+		s.adminToken = token
+	}
+}
+
+// WithBypassPaths sets custom path and extension rules to bypass the waiting room.
+func WithBypassPaths(paths []string) ServerOption {
+	return func(s *Server) {
+		s.pathMatcher = NewPathMatcher(paths)
+	}
+}
+
+// WithRateLimiter sets the client IP rate limiter to protect against spam / bot surges.
+func WithRateLimiter(limiter *ratelimit.IPRateLimiter) ServerOption {
+	return func(s *Server) {
+		s.ipLimiter = limiter
+	}
+}
+
 // Server represents the QueueGuard Reverse Proxy & Traffic Shaper engine.
 type Server struct {
-	targetURL    *url.URL
-	reverseProxy *httputil.ReverseProxy
-	waitingRoom  *queue.WaitingRoom
-	signer       *crypto.Signer
-	htmlContent  []byte
+	targetURL        *url.URL
+	reverseProxy     *httputil.ReverseProxy
+	waitingRoom      *queue.WaitingRoom
+	signer           *crypto.Signer
+	htmlContent      []byte
+	adminHTMLContent []byte
+	adminToken       string
+	pathMatcher      *PathMatcher
+	ipLimiter        *ratelimit.IPRateLimiter
+	startTime        time.Time
+
+	// Internal metrics
+	metricsTotalRequests    uint64
+	metricsBypassedRequests uint64
+	metricsAdmittedRequests uint64
+	metricsLimitedRequests  uint64
 }
 
 // NewServer initializes a new QueueGuard Reverse Proxy pointing to targetOrigin.
-func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer) (*Server, error) {
+func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer, opts ...ServerOption) (*Server, error) {
 	originURL, err := url.Parse(targetOrigin)
 	if err != nil {
 		return nil, fmt.Errorf("invalid origin target URL: %w", err)
@@ -48,17 +85,29 @@ func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer
 		req.Host = originURL.Host
 	}
 
-	return &Server{
-		targetURL:    originURL,
-		reverseProxy: proxy,
-		waitingRoom:  wr,
-		signer:       signer,
-		htmlContent:  web.WaitingRoomHTML,
-	}, nil
+	s := &Server{
+		targetURL:        originURL,
+		reverseProxy:     proxy,
+		waitingRoom:      wr,
+		signer:           signer,
+		htmlContent:      web.WaitingRoomHTML,
+		adminHTMLContent: web.AdminHTML,
+		adminToken:       "queueguard-admin-secret",
+		pathMatcher:      NewPathMatcher(nil),
+		startTime:        time.Now(),
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s, nil
 }
 
 // ServeHTTP inspects incoming traffic, enforces waiting room turnstiles, and proxies admitted requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	atomic.AddUint64(&s.metricsTotalRequests, 1)
+
 	// 1. Healthcheck endpoint
 	if r.URL.Path == "/queueguard/healthz" {
 		w.Header().Set("Content-Type", "application/json")
@@ -66,31 +115,66 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. SSE position stream
+	// 2. Metrics endpoint
+	if r.URL.Path == "/queueguard/metrics" || r.URL.Path == "/metrics" {
+		s.handleMetrics(w, r)
+		return
+	}
+
+	// 3. Admin endpoints (Dashboard UI & Control API)
+	if r.URL.Path == "/queueguard/admin" || strings.HasPrefix(r.URL.Path, "/queueguard/api/admin/") {
+		s.handleAdmin(w, r)
+		return
+	}
+
+	// 4. SSE position stream
 	if r.URL.Path == "/queueguard/sse" {
 		s.handleSSE(w, r)
 		return
 	}
 
-	// 3. Status query endpoint
+	// 5. Status query endpoint
 	if r.URL.Path == "/queueguard/status" {
 		s.handleStatus(w, r)
 		return
 	}
 
-	// 4. Check if bypass mode is actively enabled
+	// 6. Check path whitelist / static assets
+	if s.pathMatcher != nil && s.pathMatcher.ShouldBypass(r.URL.Path) {
+		atomic.AddUint64(&s.metricsBypassedRequests, 1)
+		s.reverseProxy.ServeHTTP(w, r)
+		return
+	}
+
+	// 7. Check if bypass mode is actively enabled
 	if s.waitingRoom.IsBypass() {
+		atomic.AddUint64(&s.metricsBypassedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 5. Check if request holds a cryptographically valid admission ticket
+	// 8. Check if request holds a cryptographically valid admission ticket
 	if s.hasValidTicket(r) {
+		atomic.AddUint64(&s.metricsAdmittedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 6. User has no ticket. Identify session
+	// 9. Client has no ticket. Check IP rate limit for new queue enrollments
+	clientIP := ratelimit.ExtractIP(r)
+	if s.ipLimiter != nil && !s.ipLimiter.Allow(clientIP) {
+		atomic.AddUint64(&s.metricsLimitedRequests, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "10")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error":   "rate_limited",
+			"message": "Too many queue enrollment requests from this IP. Please wait a moment.",
+		})
+		return
+	}
+
+	// 10. User has no ticket. Identify session
 	sessionID := s.getOrCreateSessionID(w, r)
 
 	// Enroll session in waiting room (idempotent across F5)
@@ -108,6 +192,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: false,
 			SameSite: http.SameSiteLaxMode,
 		})
+		atomic.AddUint64(&s.metricsAdmittedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}

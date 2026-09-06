@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QueueGuard — Trung Tâm Quản Trị (Admin Control Plane)</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #111827;
+      --card-border: #1f2937;
+      --primary: #06b6d4;
+      --accent: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .brand h1 span {
+      color: var(--primary);
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge-normal {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .badge-paused {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .badge-bypass {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--warn);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 10px currentColor;
+    }
+
+    /* Token bar */
+    .token-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--card);
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+    }
+    .token-input {
+      background: #1f2937;
+      border: 1px solid #374151;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .token-input:focus { border-color: var(--primary); }
+
+    /* Grid of Metrics */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      position: relative;
+    }
+    .card-title {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+    .card-value {
+      font-size: 2.2rem;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1.2;
+    }
+    .card-sub {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+    }
+
+    /* Controls Section */
+    .controls-panel {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .control-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .control-box {
+      background: #141c2e;
+      border: 1px solid #24324c;
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+    .control-box h3 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+      color: #e2e8f0;
+    }
+    .control-box p {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-success { background: var(--accent); color: #fff; }
+    .btn-primary { background: var(--primary); color: #000; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid #4b5563;
+      color: #e5e7eb;
+    }
+    .btn-outline:hover { background: #1f2937; }
+
+    /* Rate slider */
+    .rate-inputs {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .rate-slider {
+      flex: 1;
+      accent-color: var(--primary);
+    }
+    .rate-number {
+      width: 70px;
+      padding: 8px;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 6px;
+      color: #fff;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    /* Quick Links */
+    .quick-links {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .quick-links a {
+      color: var(--primary);
+      text-decoration: none;
+      font-size: 0.875rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .quick-links a:hover { text-decoration: underline; }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      padding: 1rem 1.5rem;
+      background: #1e293b;
+      border: 1px solid var(--primary);
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 1000;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1>🛡️ Queue<span>Guard</span></h1>
+        <div id="statusBadge" class="status-badge badge-normal">
+          <div class="pulse-dot"></div>
+          <span id="statusText">Hoạt động (Normal)</span>
+        </div>
+      </div>
+      <div class="token-bar">
+        <label for="adminToken" style="font-size: 0.8rem; color: var(--text-muted);">Admin Token:</label>
+        <input type="password" id="adminToken" class="token-input" placeholder="queueguard-admin-secret">
+        <button class="btn btn-outline" onclick="saveToken()">Lưu</button>
+      </div>
+    </header>
+
+    <!-- Metrics Grid -->
+    <div class="metrics-grid">
+      <div class="card">
+        <div class="card-title">Hàng Chờ Hiện Tại</div>
+        <div class="card-value" id="valQueueDepth" style="color: var(--primary);">0</div>
+        <div class="card-sub">Người dùng đang xếp hàng</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Tốc Độ Xả Vé</div>
+        <div class="card-value" id="valRate" style="color: var(--accent);">10</div>
+        <div class="card-sub">Người dùng / giây</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Tổng Vé Đã Cấp</div>
+        <div class="card-value" id="valAdmitted">0</div>
+        <div class="card-sub">Đã chuyển vào web chính</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Số Vé Mới Nhất</div>
+        <div class="card-value" id="valLastIssued">0</div>
+        <div class="card-sub">Số thứ tự turnstile</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Phiên Active (RAM)</div>
+        <div class="card-value" id="valActiveSessions">0</div>
+        <div class="card-sub">Phiên đang theo dõi</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Kết Nối SSE Trực Tiếp</div>
+        <div class="card-value" id="valSubscribers" style="color: #a855f7;">0</div>
+        <div class="card-sub">Trình duyệt đang stream</div>
+      </div>
+    </div>
+
+    <!-- Control Center -->
+    <div class="controls-panel">
+      <div class="section-title">⚡ Trung Tâm Điều Khiển Khẩn Cấp (Emergency Control Center)</div>
+
+      <div class="control-row">
+        <!-- Pause / Resume -->
+        <div class="control-box">
+          <h3>🚨 Nút Khẩn Cấp (Panic / Pause)</h3>
+          <p>Tạm dừng xả vé ngay lập tức khi database hoặc máy chủ gốc có dấu hiệu quá nhiệt/treo.</p>
+          <div style="display: flex; gap: 10px;">
+            <button id="btnPause" class="btn btn-danger" onclick="togglePause(true)">🛑 Dừng Xả Vé</button>
+            <button id="btnResume" class="btn btn-success" onclick="togglePause(false)">▶️ Tiếp Tục Xả</button>
+          </div>
+        </div>
+
+        <!-- Bypass Mode -->
+        <div class="control-box">
+          <h3>🚀 Chế Độ Mở Cửa (Bypass Mode)</h3>
+          <p>Bỏ qua hàng chờ hoàn toàn, cho phép toàn bộ người dùng vào thẳng website không cần xếp hàng.</p>
+          <div style="display: flex; gap: 10px;">
+            <button id="btnBypassOn" class="btn btn-outline" onclick="toggleBypass(true)">Bật Bypass</button>
+            <button id="btnBypassOff" class="btn btn-outline" onclick="toggleBypass(false)">Tắt Bypass</button>
+          </div>
+        </div>
+
+        <!-- Discharge Rate -->
+        <div class="control-box">
+          <h3>⚡ Điều Chỉnh Tốc Độ Xả (Discharge Rate)</h3>
+          <p>Thay đổi số lượng người dùng được cấp phép vào hệ thống mỗi giây trong thời gian thực.</p>
+          <div class="rate-inputs">
+            <input type="range" id="rateSlider" class="rate-slider" min="1" max="500" value="10" oninput="syncRate(this.value)">
+            <input type="number" id="rateNumber" class="rate-number" min="1" max="10000" value="10" onchange="syncRate(this.value)">
+            <button class="btn btn-primary" onclick="applyRate()">Áp dụng</button>
+          </div>
+        </div>
+
+        <!-- Reset Queue -->
+        <div class="control-box">
+          <h3>🧹 Đặt Lại Hàng Chờ (Reset Queue)</h3>
+          <p>Xóa toàn bộ số thứ tự hàng chờ và danh sách phiên đang đợi về 0 (chỉ dùng khi kết thúc sự kiện).</p>
+          <button class="btn btn-outline" style="border-color: var(--danger); color: var(--danger);" onclick="resetQueue()">⚠️ Reset Hàng Chờ</button>
+        </div>
+      </div>
+
+      <div class="quick-links">
+        <span style="color: var(--text-muted); font-size: 0.875rem;">Liên kết nhanh:</span>
+        <a href="/" target="_blank">🌐 Trang Phòng Chờ Khách Hàng</a>
+        <a href="/metrics" target="_blank">📊 Prometheus Metrics (/metrics)</a>
+        <a href="/queueguard/healthz" target="_blank">🩺 Health Check (/healthz)</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    let currentToken = localStorage.getItem("queueguard_admin_token") || "queueguard-admin-secret";
+    document.getElementById("adminToken").value = currentToken;
+
+    function saveToken() {
+      currentToken = document.getElementById("adminToken").value.trim();
+      localStorage.setItem("queueguard_admin_token", currentToken);
+      document.cookie = `queueguard_admin_token=${encodeURIComponent(currentToken)}; path=/queueguard`;
+      showToast("✅ Đã lưu Admin Token!");
+      fetchStats();
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById("toast");
+      t.innerText = msg;
+      t.classList.add("show");
+      setTimeout(() => t.classList.remove("show"), 3000);
+    }
+
+    function syncRate(val) {
+      document.getElementById("rateSlider").value = val;
+      document.getElementById("rateNumber").value = val;
+    }
+
+    async function apiPost(endpoint, body = {}) {
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Admin-Token": currentToken
+          },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || "Lỗi xử lý yêu cầu");
+        }
+        return data;
+      } catch (err) {
+        showToast("❌ " + err.message);
+        throw err;
+      }
+    }
+
+    async function togglePause(pause) {
+      const endpoint = pause ? "/queueguard/api/admin/pause" : "/queueguard/api/admin/resume";
+      const data = await apiPost(endpoint);
+      if (data) {
+        showToast(pause ? "🛑 Đã kích hoạt Emergency Pause: Dừng xả vé!" : "🟢 Đã tiếp tục xả vé vào cổng!");
+        fetchStats();
+      }
+    }
+
+    async function toggleBypass(enable) {
+      const data = await apiPost("/queueguard/api/admin/bypass", { bypass: enable });
+      if (data) {
+        showToast(enable ? "🚀 Chế độ Bypass đã BẬT (Mở tự do)!" : "🛡️ Chế độ Bypass đã TẮT (Hàng chờ kích hoạt)!");
+        fetchStats();
+      }
+    }
+
+    async function applyRate() {
+      const rate = parseInt(document.getElementById("rateNumber").value, 10);
+      if (!rate || rate <= 0) {
+        showToast("❌ Tốc độ xả phải lớn hơn 0");
+        return;
+      }
+      const data = await apiPost("/queueguard/api/admin/rate", { rate: rate });
+      if (data) {
+        showToast(`⚡ Đã cập nhật tốc độ xả vé: ${rate} users/giây!`);
+        fetchStats();
+      }
+    }
+
+    async function resetQueue() {
+      if (!confirm("Bạn có chắc chắn muốn RESET toàn bộ hàng chờ về 0 không? Mọi người dùng đang đợi sẽ bị hủy phiên.")) {
+        return;
+      }
+      const data = await apiPost("/queueguard/api/admin/reset");
+      if (data) {
+        showToast("🧹 Đã reset hàng chờ về 0 thành công!");
+        fetchStats();
+      }
+    }
+
+    async function fetchStats() {
+      try {
+        const res = await fetch("/queueguard/api/admin/stats", {
+          headers: { "X-Admin-Token": currentToken }
+        });
+        if (res.status === 401) {
+          const badge = document.getElementById("statusBadge");
+          badge.className = "status-badge badge-paused";
+          document.getElementById("statusText").innerText = "Chưa xác thực Admin Token";
+          return;
+        }
+        if (!res.ok) return;
+
+        const s = await res.json();
+        document.getElementById("valQueueDepth").innerText = Number(s.queue_depth).toLocaleString();
+        document.getElementById("valRate").innerText = Number(s.rate).toLocaleString();
+        document.getElementById("valAdmitted").innerText = Number(s.admitted).toLocaleString();
+        document.getElementById("valLastIssued").innerText = Number(s.last_issued).toLocaleString();
+        document.getElementById("valActiveSessions").innerText = Number(s.active_sessions).toLocaleString();
+        document.getElementById("valSubscribers").innerText = Number(s.subscribers).toLocaleString();
+
+        const badge = document.getElementById("statusBadge");
+        const statusText = document.getElementById("statusText");
+
+        if (s.paused) {
+          badge.className = "status-badge badge-paused";
+          statusText.innerText = "TẠM DỪNG (EMERGENCY PAUSE)";
+        } else if (s.bypass) {
+          badge.className = "status-badge badge-bypass";
+          statusText.innerText = "ĐANG MỞ CỬA TỰ DO (BYPASS MODE)";
+        } else {
+          badge.className = "status-badge badge-normal";
+          statusText.innerText = "HOẠT ĐỘNG ỔN ĐỊNH (PROTECTED)";
+        }
+      } catch (err) {
+        // Ignore fetch errors during polling
+      }
+    }
+
+    // Auto poll stats every 1.5 seconds
+    fetchStats();
+    setInterval(fetchStats, 1500);
+  </script>
+</body>
+</html>
+

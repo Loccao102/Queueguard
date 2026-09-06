@@ -17,3 +17,4 @@ COPY --from=builder /mock-origin /app/mock-origin
 
 EXPOSE 8000 8080
 ENTRYPOINT ["/app/queueguard"]
+
