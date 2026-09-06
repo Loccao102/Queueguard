@@ -26,6 +26,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	roomID := r.URL.Query().Get("room")
+	room := s.waitingRoom
+	if roomID != "" && s.roomManager != nil {
+		if rm, ok := s.roomManager.Get(roomID); ok {
+			room = rm
+		}
+	}
+
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -33,7 +41,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no") // Disable Nginx buffering if deployed behind proxy
 
 	// Subscribe to queue advance events
-	subCh, unsubscribe := s.waitingRoom.Subscribe()
+	subCh, unsubscribe := room.Subscribe()
 	defer unsubscribe()
 
 	heartbeatTicker := time.NewTicker(2 * time.Second)
@@ -41,14 +49,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Function to send current status payload
 	sendUpdate := func() bool {
-		admitted, pos, estSec, token, err := s.waitingRoom.CheckStatus(sessionID)
+		admitted, pos, estSec, token, err := room.CheckStatus(sessionID)
 		if err != nil {
 			return false
 		}
 
-		sess, _ := s.waitingRoom.Enroll(sessionID)
+		sess, _ := room.Enroll(sessionID)
 
-		isPreQueue := s.waitingRoom.IsPreQueue()
+		isPreQueue := room.IsPreQueue()
 		payload := map[string]any{
 			"ticket_number": sess.TicketNumber,
 			"position":      pos,
@@ -56,6 +64,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			"admitted":      admitted,
 			"token":         token,
 			"is_prequeue":   isPreQueue,
+			"room":          room.ID(),
+			"room_name":     room.Name(),
 		}
 
 		data, _ := json.Marshal(payload)
@@ -85,7 +95,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case <-heartbeatTicker.C:
-			s.waitingRoom.Heartbeat(sessionID)
+			room.Heartbeat(sessionID)
 			if !sendUpdate() {
 				return
 			}

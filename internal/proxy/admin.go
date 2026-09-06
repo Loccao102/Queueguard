@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Loccao102/queueguard/internal/queue"
 )
 
 // handleAdmin routes requests under /queueguard/admin and /queueguard/api/admin/*.
@@ -42,6 +44,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/queueguard/api/admin/stats":
 		s.handleAdminStats(w, r)
+	case "/queueguard/api/admin/rooms":
+		s.handleAdminRooms(w, r)
 	case "/queueguard/api/admin/pause":
 		s.handleAdminPause(w, r)
 	case "/queueguard/api/admin/resume":
@@ -90,25 +94,111 @@ func (s *Server) authorizeAdmin(r *http.Request) bool {
 	return false
 }
 
-func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
-	preQueueCount := 0
-	if pq := s.waitingRoom.PreQueue(); pq != nil {
-		preQueueCount = pq.Count()
+func (s *Server) targetRooms(r *http.Request) []*queue.WaitingRoom {
+	roomParam := r.URL.Query().Get("room")
+	if roomParam == "" || roomParam == "default" {
+		return []*queue.WaitingRoom{s.waitingRoom}
+	}
+	if roomParam == "all" && s.roomManager != nil {
+		all := s.roomManager.All()
+		list := make([]*queue.WaitingRoom, 0, len(all))
+		for _, rm := range all {
+			list = append(list, rm)
+		}
+		return list
+	}
+	if s.roomManager != nil {
+		if rm, ok := s.roomManager.Get(roomParam); ok {
+			return []*queue.WaitingRoom{rm}
+		}
+	}
+	return []*queue.WaitingRoom{s.waitingRoom}
+}
+
+func (s *Server) handleAdminRooms(w http.ResponseWriter, r *http.Request) {
+	if s.roomManager == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"rooms": []any{}})
+		return
+	}
+
+	defs := s.roomManager.Definitions()
+	rooms := s.roomManager.All()
+	var list []map[string]any
+
+	for id, def := range defs {
+		room := rooms[id]
+		if room == nil {
+			continue
+		}
+		roomInfo := map[string]any{
+			"id":          id,
+			"name":        def.Name,
+			"path_prefix": def.PathPrefix,
+			"rate":        room.GetDischargeRate(),
+			"queue_depth": room.Sequence().QueueDepth(),
+			"last_issued": room.Sequence().LastIssued(),
+			"admitted":    room.Sequence().Admitted(),
+			"paused":      room.IsPaused(),
+			"bypass":      room.IsBypass(),
+			"subscribers": room.SubscribersCount(),
+		}
+		list = append(list, roomInfo)
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"queue_depth":     s.waitingRoom.Sequence().QueueDepth(),
-		"last_issued":     s.waitingRoom.Sequence().LastIssued(),
-		"admitted":        s.waitingRoom.Sequence().Admitted(),
-		"rate":            s.waitingRoom.GetDischargeRate(),
-		"paused":          s.waitingRoom.IsPaused(),
-		"bypass":          s.waitingRoom.IsBypass(),
-		"is_prequeue":     s.waitingRoom.IsPreQueue(),
-		"prequeue_count":  preQueueCount,
-		"active_sessions": s.waitingRoom.ActiveSessionsCount(),
-		"subscribers":     s.waitingRoom.SubscribersCount(),
-		"uptime_seconds":  int64(time.Since(s.startTime).Seconds()),
+		"rooms": list,
 	})
+}
+
+func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	targetRoom := s.waitingRoom
+	if roomParam := r.URL.Query().Get("room"); roomParam != "" && s.roomManager != nil {
+		if rm, ok := s.roomManager.Get(roomParam); ok {
+			targetRoom = rm
+		}
+	}
+
+	preQueueCount := 0
+	if pq := targetRoom.PreQueue(); pq != nil {
+		preQueueCount = pq.Count()
+	}
+
+	payload := map[string]any{
+		"room":            targetRoom.ID(),
+		"room_name":       targetRoom.Name(),
+		"queue_depth":     targetRoom.Sequence().QueueDepth(),
+		"last_issued":     targetRoom.Sequence().LastIssued(),
+		"admitted":        targetRoom.Sequence().Admitted(),
+		"rate":            targetRoom.GetDischargeRate(),
+		"paused":          targetRoom.IsPaused(),
+		"bypass":          targetRoom.IsBypass(),
+		"is_prequeue":     targetRoom.IsPreQueue(),
+		"prequeue_count":  preQueueCount,
+		"active_sessions": targetRoom.ActiveSessionsCount(),
+		"subscribers":     targetRoom.SubscribersCount(),
+		"uptime_seconds":  int64(time.Since(s.startTime).Seconds()),
+	}
+
+	if s.roomManager != nil && len(s.roomManager.All()) > 1 {
+		var roomSummaries []map[string]any
+		for id, def := range s.roomManager.Definitions() {
+			if rm, ok := s.roomManager.Get(id); ok {
+				roomSummaries = append(roomSummaries, map[string]any{
+					"id":          id,
+					"name":        def.Name,
+					"path_prefix": def.PathPrefix,
+					"queue_depth": rm.Sequence().QueueDepth(),
+					"admitted":    rm.Sequence().Admitted(),
+					"rate":        rm.GetDischargeRate(),
+					"paused":      rm.IsPaused(),
+					"bypass":      rm.IsBypass(),
+				})
+			}
+		}
+		payload["rooms"] = roomSummaries
+	}
+
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (s *Server) handleAdminEventTime(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +229,11 @@ func (s *Server) handleAdminEventTime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.waitingRoom.SetEventStartTime(targetTime)
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.SetEventStartTime(targetTime)
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message":    "pre-queue event start time updated",
 		"start_time": targetTime.Format(time.RFC3339),
@@ -151,10 +245,14 @@ func (s *Server) handleAdminPause(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.waitingRoom.SetPaused(true)
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.SetPaused(true)
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "emergency pause activated: admissions stopped",
 		"paused":  true,
+		"count":   len(rooms),
 	})
 }
 
@@ -163,10 +261,14 @@ func (s *Server) handleAdminResume(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.waitingRoom.SetPaused(false)
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.SetPaused(false)
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "admissions resumed",
 		"paused":  false,
+		"count":   len(rooms),
 	})
 }
 
@@ -199,10 +301,15 @@ func (s *Server) handleAdminRate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.waitingRoom.SetDischargeRate(newRate)
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.SetDischargeRate(newRate)
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "discharge rate updated",
 		"rate":    newRate,
+		"count":   len(rooms),
 	})
 }
 
@@ -224,10 +331,15 @@ func (s *Server) handleAdminBypass(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.waitingRoom.SetBypass(bypassVal)
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.SetBypass(bypassVal)
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "bypass mode updated",
 		"bypass":  bypassVal,
+		"count":   len(rooms),
 	})
 }
 
@@ -237,8 +349,13 @@ func (s *Server) handleAdminReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.waitingRoom.Reset()
+	rooms := s.targetRooms(r)
+	for _, rm := range rooms {
+		rm.Reset()
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"message": "waiting room and turnstile sequence reset to zero",
+		"count":   len(rooms),
 	})
 }

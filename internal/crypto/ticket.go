@@ -17,6 +17,7 @@ var (
 	ErrSignatureFailed = errors.New("ticket signature verification failed")
 	ErrTicketExpired   = errors.New("admission ticket has expired")
 	ErrDeviceMismatch  = errors.New("admission ticket device fingerprint mismatch")
+	ErrRoomMismatch    = errors.New("admission ticket room ID mismatch")
 )
 
 // AdmissionTicket represents a cryptographically verifiable pass granted to a client
@@ -24,6 +25,7 @@ var (
 type AdmissionTicket struct {
 	SessionID   string `json:"sid"`
 	QueueNumber uint64 `json:"qnum"`
+	RoomID      string `json:"rid,omitempty"`
 	DeviceHash  string `json:"dev,omitempty"`
 	IssuedAt    int64  `json:"iat"`
 	ExpiresAt   int64  `json:"exp"`
@@ -68,8 +70,18 @@ func (s *Signer) IssueWithDevice(sessionID string, queueNum uint64, deviceHash s
 	return s.IssueTTL(sessionID, queueNum, deviceHash, s.ttl)
 }
 
+// IssueWithRoom generates a signed admission ticket token bound to a device fingerprint and room ID.
+func (s *Signer) IssueWithRoom(sessionID string, queueNum uint64, deviceHash, roomID string) (string, *AdmissionTicket, error) {
+	return s.IssueRoomTTL(sessionID, queueNum, deviceHash, roomID, s.ttl)
+}
+
 // IssueTTL generates a signed admission ticket token with a custom TTL duration.
 func (s *Signer) IssueTTL(sessionID string, queueNum uint64, deviceHash string, customTTL time.Duration) (string, *AdmissionTicket, error) {
+	return s.IssueRoomTTL(sessionID, queueNum, deviceHash, "", customTTL)
+}
+
+// IssueRoomTTL generates a signed admission ticket token with room ID and custom TTL.
+func (s *Signer) IssueRoomTTL(sessionID string, queueNum uint64, deviceHash, roomID string, customTTL time.Duration) (string, *AdmissionTicket, error) {
 	if customTTL <= 0 {
 		customTTL = s.ttl
 	}
@@ -77,6 +89,7 @@ func (s *Signer) IssueTTL(sessionID string, queueNum uint64, deviceHash string, 
 	ticket := &AdmissionTicket{
 		SessionID:   sessionID,
 		QueueNumber: queueNum,
+		RoomID:      roomID,
 		DeviceHash:  deviceHash,
 		IssuedAt:    now.UnixMilli(),
 		ExpiresAt:   now.Add(customTTL).UnixMilli(),
@@ -101,6 +114,11 @@ func (s *Signer) Verify(token string) (*AdmissionTicket, error) {
 
 // VerifyWithDevice validates a signed ticket token and verifies matching device fingerprint.
 func (s *Signer) VerifyWithDevice(token string, expectedDeviceHash string) (*AdmissionTicket, error) {
+	return s.VerifyWithRoom(token, expectedDeviceHash, "")
+}
+
+// VerifyWithRoom validates a signed ticket token and verifies matching device fingerprint and room ID.
+func (s *Signer) VerifyWithRoom(token string, expectedDeviceHash string, expectedRoomID string) (*AdmissionTicket, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
 		return nil, ErrInvalidTicket
@@ -129,6 +147,10 @@ func (s *Signer) VerifyWithDevice(token string, expectedDeviceHash string) (*Adm
 
 	if expectedDeviceHash != "" && ticket.DeviceHash != "" && ticket.DeviceHash != expectedDeviceHash {
 		return nil, ErrDeviceMismatch
+	}
+
+	if expectedRoomID != "" && ticket.RoomID != "" && ticket.RoomID != expectedRoomID {
+		return nil, ErrRoomMismatch
 	}
 
 	return &ticket, nil

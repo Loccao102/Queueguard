@@ -1,0 +1,94 @@
+# Default values for queueguard.
+# This is a YAML-formatted file.
+
+replicaCount: 2
+
+image:
+  repository: queueguard
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8000
+  targetPort: 8000
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: queue.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# QueueGuard Application Configuration
+config:
+  originUrl: "http://protected-origin:8080"
+  dischargeRate: 20
+  ticketTtl: "10m"
+  secretKey: "queueguard-production-secret-change-me"
+  adminToken: "queueguard-admin-token-secret"
+  bypassPaths: ".css,.js,.png,.jpg,.svg,.ico,.woff2,/healthz"
+  ipRateLimit: 60
+  ipRateBurst: 20
+  bindDevice: true
+  powDifficulty: 0
+  eventStartTime: ""
+  redisUrl: ""
+  
+  # Whitelabel Branding
+  eventTitle: "Bạn Đang Trong Hàng Chờ"
+  brandLogoUrl: ""
+  themeColor: "#06b6d4"
+  announcementText: ""
+  
+  # Multi-Room Configuration (id:path_prefix:discharge_rate)
+  roomsConfig: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

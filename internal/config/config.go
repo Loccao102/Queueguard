@@ -21,6 +21,47 @@ type AppConfig struct {
 	RedisURL            string
 	BindDevice          bool
 	PoWDifficulty       int // 0 = disabled, 3-5 = active difficulty
+	TemplatePath        string
+	EventTitle          string
+	BrandLogoURL        string
+	ThemeColor          string
+	Announcement        string
+	RoomsConfig         string // format: "vip:/tickets/vip:5,general:/tickets:30"
+}
+
+// RoomSpec holds parsed config for a room from ROOMS_CONFIG
+type RoomSpec struct {
+	ID         string
+	PathPrefix string
+	Rate       uint64
+}
+
+// ParseRooms parses the ROOMS_CONFIG string into a list of RoomSpec
+func (c *AppConfig) ParseRooms() []RoomSpec {
+	if c.RoomsConfig == "" {
+		return nil
+	}
+	var specs []RoomSpec
+	parts := strings.Split(c.RoomsConfig, ",")
+	for _, part := range parts {
+		tokens := strings.Split(strings.TrimSpace(part), ":")
+		if len(tokens) >= 2 {
+			id := strings.TrimSpace(tokens[0])
+			prefix := strings.TrimSpace(tokens[1])
+			var rate uint64 = c.DischargeRatePerSec
+			if len(tokens) >= 3 {
+				if r, err := strconv.ParseUint(tokens[2], 10, 64); err == nil && r > 0 {
+					rate = r
+				}
+			}
+			specs = append(specs, RoomSpec{
+				ID:         id,
+				PathPrefix: prefix,
+				Rate:       rate,
+			})
+		}
+	}
+	return specs
 }
 
 func Load() *AppConfig {
@@ -68,6 +109,13 @@ func Load() *AppConfig {
 
 	powDifficulty := getEnvInt("POW_DIFFICULTY", 0)
 
+	templatePath := getEnv("WAITING_ROOM_TEMPLATE_PATH", "")
+	eventTitle := getEnv("EVENT_TITLE", "Bạn Đang Trong Hàng Chờ")
+	brandLogoURL := getEnv("BRAND_LOGO_URL", "")
+	themeColor := getEnv("THEME_COLOR", "#6366f1")
+	announcement := getEnv("ANNOUNCEMENT_TEXT", "")
+	roomsConfig := getEnv("ROOMS_CONFIG", "")
+
 	return &AppConfig{
 		Port:                port,
 		OriginURL:           originURL,
@@ -82,6 +130,12 @@ func Load() *AppConfig {
 		RedisURL:            redisURL,
 		BindDevice:          bindDevice,
 		PoWDifficulty:       powDifficulty,
+		TemplatePath:        templatePath,
+		EventTitle:          eventTitle,
+		BrandLogoURL:        brandLogoURL,
+		ThemeColor:          themeColor,
+		Announcement:        announcement,
+		RoomsConfig:         roomsConfig,
 	}
 }
 

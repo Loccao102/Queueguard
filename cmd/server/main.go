@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,38 @@ func main() {
 
 	go waitingRoom.StartDischargeWorker(ctx)
 
+	// Initialize RoomManager for multi-room routing
+	roomManager := queue.NewRoomManager(waitingRoom)
+	if specs := cfg.ParseRooms(); len(specs) > 0 {
+		log.Printf("🎪 Multi-Waiting Room Mode detected: %d custom room(s) configured", len(specs))
+		for _, spec := range specs {
+			rCfg := queue.DefaultConfig()
+			rCfg.RoomID = spec.ID
+			rCfg.Name = strings.ToUpper(spec.ID) + " Lounge"
+			rCfg.DischargeRatePerSec = spec.Rate
+			rCfg.TicketTTL = cfg.TicketTTL
+			rCfg.EventStartTime = cfg.EventStartTime
+
+			var rRoom *queue.WaitingRoom
+			if distributedEngine != nil {
+				rRoom = queue.NewWaitingRoomWithEngine(rCfg, signer, distributedEngine)
+			} else {
+				rRoom = queue.NewWaitingRoom(rCfg, signer)
+			}
+			go rRoom.StartDischargeWorker(ctx)
+
+			_ = roomManager.Register(queue.RoomDefinition{
+				ID:                  spec.ID,
+				Name:                rCfg.Name,
+				PathPrefix:          spec.PathPrefix,
+				DischargeRatePerSec: spec.Rate,
+				TicketTTL:           cfg.TicketTTL,
+				EventStartTime:      cfg.EventStartTime,
+			}, rRoom)
+			log.Printf("   ↳ Room '%s' -> prefix: %s | discharge: %d users/sec", spec.ID, spec.PathPrefix, spec.Rate)
+		}
+	}
+
 	// Initialize Reverse Proxy
 	proxyServer, err := proxy.NewServer(
 		cfg.OriginURL,
@@ -69,6 +102,9 @@ func main() {
 		proxy.WithRateLimiter(ipLimiter),
 		proxy.WithDeviceBinding(cfg.BindDevice),
 		proxy.WithPoWDifficulty(cfg.PoWDifficulty),
+		proxy.WithRoomManager(roomManager),
+		proxy.WithTemplatePath(cfg.TemplatePath),
+		proxy.WithBranding(cfg.EventTitle, cfg.BrandLogoURL, cfg.ThemeColor, cfg.Announcement),
 	)
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize QueueGuard proxy: %v", err)

@@ -36,6 +36,8 @@ type Config struct {
 	TicketTTL           time.Duration // Time an admitted ticket remains valid on the origin
 	SessionIdleTimeout  time.Duration // Time before an inactive tab is considered abandoned
 	EventStartTime      time.Time     // Optional future event start time (activates Pre-Queue Lottery)
+	RoomID              string        // Identifier for multi-room routing
+	Name                string        // Human-friendly name of the waiting room
 }
 
 // DefaultConfig provides recommended baseline settings.
@@ -149,7 +151,7 @@ func (wr *WaitingRoom) Heartbeat(sessionID string) bool {
 func (wr *WaitingRoom) CheckStatus(sessionID string) (bool, uint64, int64, string, error) {
 	// If bypass mode is active, everyone is admitted immediately
 	if atomic.LoadUint32(&wr.bypass) == 1 {
-		token, _, err := wr.signer.Issue(sessionID, 0)
+		token, _, err := wr.signer.IssueWithRoom(sessionID, 0, "", wr.ID())
 		return true, 0, 0, token, err
 	}
 
@@ -178,7 +180,7 @@ func (wr *WaitingRoom) CheckStatus(sessionID string) (bool, uint64, int64, strin
 	if sess.TicketNumber > 0 && sess.TicketNumber <= admittedThreshold && atomic.LoadUint32(&wr.paused) == 0 {
 		sess.Status = StatusAdmitted
 		if sess.AdmissionToken == "" {
-			token, _, err := wr.signer.Issue(sess.ID, sess.TicketNumber)
+			token, _, err := wr.signer.IssueWithRoom(sess.ID, sess.TicketNumber, "", wr.ID())
 			if err != nil {
 				return false, 0, 0, "", err
 			}
@@ -372,3 +374,25 @@ func (wr *WaitingRoom) SetEventStartTime(t time.Time) {
 func (wr *WaitingRoom) IsPreQueue() bool {
 	return wr.preQueue != nil && wr.preQueue.IsActive()
 }
+
+// ID returns the room identifier (defaulting to "default").
+func (wr *WaitingRoom) ID() string {
+	if wr.config.RoomID == "" {
+		return "default"
+	}
+	return wr.config.RoomID
+}
+
+// Name returns the human-readable display name of the room.
+func (wr *WaitingRoom) Name() string {
+	if wr.config.Name == "" {
+		return wr.ID()
+	}
+	return wr.config.Name
+}
+
+// Config returns the configuration of the waiting room.
+func (wr *WaitingRoom) Config() Config {
+	return wr.config
+}
+

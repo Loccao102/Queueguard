@@ -94,3 +94,31 @@ func TestDeviceBinding(t *testing.T) {
 		t.Fatalf("expected ErrDeviceMismatch for transferred ticket, got: %v", err)
 	}
 }
+
+func TestRoomBinding(t *testing.T) {
+	signer := NewSigner("secret-key", 5*time.Minute)
+
+	tokenVIP, _, err := signer.IssueWithRoom("sess_user", 10, "dev123", "room-vip")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Verifying against same room -> PASS
+	verified, err := signer.VerifyWithRoom(tokenVIP, "dev123", "room-vip")
+	if err != nil || verified == nil || verified.RoomID != "room-vip" {
+		t.Fatalf("expected successful verification for room-vip, got err=%v", err)
+	}
+
+	// 2. Verifying against different room (e.g. VIP ticket used for General or vice versa) -> FAIL
+	_, err = signer.VerifyWithRoom(tokenVIP, "dev123", "room-general")
+	if err != ErrRoomMismatch {
+		t.Fatalf("expected ErrRoomMismatch, got err=%v", err)
+	}
+
+	// 3. Verifying with empty expected room (wildcard / fallback) -> PASS
+	_, err = signer.VerifyWithRoom(tokenVIP, "dev123", "")
+	if err != nil {
+		t.Fatalf("expected empty room verification to pass, got err=%v", err)
+	}
+}
+

@@ -12,11 +12,12 @@ Tài liệu này tổng hợp toàn bộ các tính năng tiềm năng, kiến t
 | **P0 (Cao)** | **Ràng Buộc Vé Chống Bán Lại (Device Binding)** | Khóa vé theo Device Fingerprint / Hash User-Agent + IP subnet | Ngăn chặn nạn đầu cơ, mua gom và chuyển nhượng vé | ✅ Hoàn thành |
 | **P1 (Trung)** | **Gia Hạn Vé Động (Sliding Window Extension)** | Hỗ trợ header `X-QueueGuard-Extend` từ origin kéo dài TTL vé | Đảm bảo không đứt quãng luồng thanh toán / checkout | ✅ Hoàn thành |
 | **P1 (Trung)** | **Desktop & Sound Notification API** | Chuông báo âm thanh Web Audio và Web Push khi đến lượt vào web | Tránh tình trạng khách bỏ quên tab dẫn đến hết hạn vé | ✅ Hoàn thành |
-| **P1 (Trung)** | **Hỗ Trợ Đa Phòng Chờ (Multi-Room Routing)** | Cấu hình nhiều phòng chờ độc lập (`/vip`, `/regular`, `/flashsale`) | Phục vụ các sự kiện có nhiều phân khúc vé và URL khác nhau | ⏳ Milestone 4 |
-| **P1 (Trung)** | **Tùy Biến Giao Diện Thương Hiệu (Whitelabel / Theme)** | Cho phép cấu hình Logo, màu sắc, i18n đa ngôn ngữ, nhúng Video | Nâng cao trải nghiệm người dùng, hiển thị quảng cáo tài trợ | ⏳ Milestone 4 |
-| **P2 (Dài hạn)** | **Grafana Dashboard Template & OpenTelemetry** | File JSON mẫu cho Grafana và OTel Tracing | Quan sát chi tiết độ trễ, phân bố địa lý của hàng chờ | ⏳ Milestone 4 |
-| **P2 (Dài hạn)** | **Kubernetes Helm Chart & Operator** | Triển khai 1-click lên Kubernetes kèm HPA tự động scale | Sẵn sàng cho môi trường hạ tầng Cloud Native (EKS, GKE, AKS) | ⏳ Milestone 4 |
+| **P1 (Trung)** | **Hỗ Trợ Đa Phòng Chờ (Multi-Room Routing)** | Cấu hình nhiều phòng chờ độc lập (`/vip`, `/regular`, `/flashsale`) | Phục vụ các sự kiện có nhiều phân khúc vé và URL khác nhau | ✅ Hoàn thành |
+| **P1 (Trung)** | **Tùy Biến Giao Diện Thương Hiệu (Whitelabel / Theme)** | Cho phép cấu hình Logo, màu sắc, i18n đa ngôn ngữ, template ngoài | Nâng cao trải nghiệm người dùng, hiển thị quảng cáo tài trợ | ✅ Hoàn thành |
+| **P2 (Dài hạn)** | **Grafana Dashboard Template & OpenTelemetry** | File JSON mẫu cho Grafana và OTel Tracing | Quan sát chi tiết độ trễ, phân bố địa lý của hàng chờ | ✅ Hoàn thành |
+| **P2 (Dài hạn)** | **Kubernetes Helm Chart & Operator** | Triển khai 1-click lên Kubernetes kèm HPA tự động scale | Sẵn sàng cho môi trường hạ tầng Cloud Native (EKS, GKE, AKS) | ✅ Hoàn thành |
 | **P2 (Dài hạn)** | **WASM Envoy / Cloudflare Filter** | Đưa logic xác thực vé ra chạy tại CDN Edge bằng WebAssembly | Giảm tải 100% cho origin khi vé chưa hợp lệ | ⏳ Milestone 5 |
+| **P2 (Dài hạn)** | **Client & Middleware SDK (@queueguard/client-js)** | Thư viện React/Vue hook và backend middleware cho Node/Go/PHP | Tích hợp tiện lợi không cần bọc reverse proxy | ⏳ Milestone 5 |
 
 ---
 
@@ -141,10 +142,13 @@ timeline
                              : Device & IP Binding
                              : Ticket Sliding Extension
                              : Desktop/Sound Notifications
-    Milestone 4 (Kế tiếp)    : Multi-Room Support
+    Milestone 4 (Hoàn thành) : Multi-Room Routing Engine
                              : Custom Whitelabel Theming
-                             : Grafana Dashboard JSON
+                             : Grafana Dashboard Template
                              : Kubernetes Helm Chart
+    Milestone 5 (Kế tiếp)    : WASM Envoy / Cloudflare Filter
+                             : Client SDK (@queueguard/client-js)
+                             : Backend Middleware SDKs
 ```
 
 ---

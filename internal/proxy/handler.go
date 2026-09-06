@@ -64,11 +64,39 @@ func WithPoWDifficulty(diff int) ServerOption {
 	}
 }
 
+// WithRoomManager configures multi-room routing.
+func WithRoomManager(rm *queue.RoomManager) ServerOption {
+	return func(s *Server) {
+		s.roomManager = rm
+		if rm != nil && rm.Default() != nil {
+			s.waitingRoom = rm.Default()
+		}
+	}
+}
+
+// WithTemplatePath sets an external custom waiting room HTML template file path.
+func WithTemplatePath(path string) ServerOption {
+	return func(s *Server) {
+		s.templatePath = path
+	}
+}
+
+// WithBranding sets custom whitelabel branding attributes for the waiting room UI.
+func WithBranding(title, logoURL, themeColor, announcement string) ServerOption {
+	return func(s *Server) {
+		s.eventTitle = title
+		s.brandLogoURL = logoURL
+		s.themeColor = themeColor
+		s.announcement = announcement
+	}
+}
+
 // Server represents the QueueGuard Reverse Proxy & Traffic Shaper engine.
 type Server struct {
 	targetURL        *url.URL
 	reverseProxy     *httputil.ReverseProxy
 	waitingRoom      *queue.WaitingRoom
+	roomManager      *queue.RoomManager
 	signer           *crypto.Signer
 	htmlContent      []byte
 	adminHTMLContent []byte
@@ -79,6 +107,13 @@ type Server struct {
 	bindDevice       bool
 	powDifficulty    int
 	powController    *crypto.PoWController
+
+	// Whitelabel & Theming
+	templatePath string
+	eventTitle   string
+	brandLogoURL string
+	themeColor   string
+	announcement string
 
 	// Internal metrics
 	metricsTotalRequests    uint64
@@ -116,10 +151,15 @@ func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer
 		bindDevice:       true,
 		powDifficulty:    0,
 		powController:    crypto.NewPoWController("queueguard-pow-internal-secret", 5*time.Minute),
+		themeColor:       "#06b6d4",
 	}
 
 	for _, opt := range opts {
 		opt(s)
+	}
+
+	if s.roomManager == nil {
+		s.roomManager = queue.NewRoomManager(wr)
 	}
 
 	// Customize response to handle dynamic sliding ticket extension (X-QueueGuard-Extend) from Origin
@@ -132,8 +172,13 @@ func NewServer(targetOrigin string, wr *queue.WaitingRoom, signer *crypto.Signer
 					if s.bindDevice {
 						devHash = crypto.ComputeDeviceFingerprint(req.UserAgent(), ratelimit.ExtractIP(req))
 					}
-					if ticket, err := s.signer.VerifyWithDevice(cookie.Value, devHash); err == nil {
-						newToken, _, err := s.signer.IssueTTL(ticket.SessionID, ticket.QueueNumber, devHash, duration)
+					targetRoom := s.roomManager.Match(req.URL.Path)
+					expectedRoomID := ""
+					if targetRoom != nil {
+						expectedRoomID = targetRoom.ID()
+					}
+					if ticket, err := s.signer.VerifyWithRoom(cookie.Value, devHash, expectedRoomID); err == nil {
+						newToken, _, err := s.signer.IssueRoomTTL(ticket.SessionID, ticket.QueueNumber, devHash, ticket.RoomID, duration)
 						if err == nil {
 							newCookie := &http.Cookie{
 								Name:     CookieTicket,
@@ -214,15 +259,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 8. Check if bypass mode is actively enabled
-	if s.waitingRoom.IsBypass() {
+	// Match target room for this request path
+	targetRoom := s.roomManager.Match(r.URL.Path)
+	if targetRoom == nil {
+		targetRoom = s.waitingRoom
+	}
+
+	// 8. Check if bypass mode is actively enabled for this room
+	if targetRoom.IsBypass() {
 		atomic.AddUint64(&s.metricsBypassedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
 	}
 
-	// 9. Check if request holds a cryptographically valid admission ticket
-	if s.hasValidTicket(r) {
+	// 9. Check if request holds a cryptographically valid admission ticket for this room
+	if s.hasValidTicket(r, targetRoom.ID()) {
 		atomic.AddUint64(&s.metricsAdmittedRequests, 1)
 		s.reverseProxy.ServeHTTP(w, r)
 		return
@@ -266,24 +317,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 12. User has no ticket. Identify session
 	sessionID := s.getOrCreateSessionID(w, r)
 
-	// Enroll session in waiting room (idempotent across F5)
-	sess, _ := s.waitingRoom.Enroll(sessionID)
+	// Enroll session in target waiting room (idempotent across F5)
+	sess, _ := targetRoom.Enroll(sessionID)
 
 	// Check if turnstile has already reached this ticket number
-	admitted, pos, estSec, token, err := s.waitingRoom.CheckStatus(sessionID)
+	admitted, pos, estSec, token, err := targetRoom.CheckStatus(sessionID)
 	if err == nil && admitted && token != "" {
 		if s.bindDevice {
 			devHash := crypto.ComputeDeviceFingerprint(r.UserAgent(), clientIP)
-			if tokenWithDev, _, err := s.signer.IssueWithDevice(sessionID, sess.TicketNumber, devHash); err == nil {
+			if tokenWithDev, _, err := s.signer.IssueWithRoom(sessionID, sess.TicketNumber, devHash, targetRoom.ID()); err == nil {
 				token = tokenWithDev
 			}
+		}
+		ttl := targetRoom.Config().TicketTTL
+		if ttl <= 0 {
+			ttl = 10 * time.Minute
 		}
 		// User is admitted! Set ticket cookie and forward to origin
 		http.SetCookie(w, &http.Cookie{
 			Name:     CookieTicket,
 			Value:    token,
 			Path:     "/",
-			MaxAge:   600, // 10 minutes
+			MaxAge:   int(ttl.Seconds()),
 			HttpOnly: false,
 			SameSite: http.SameSiteLaxMode,
 		})
@@ -305,6 +360,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"position":      pos,
 			"est_seconds":   estSec,
 			"session_id":    sessionID,
+			"room":          targetRoom.ID(),
+			"room_name":     targetRoom.Name(),
 		})
 		return
 	}
@@ -312,11 +369,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Browser client receives the live virtual waiting room webpage
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("X-QueueGuard-Room", targetRoom.ID())
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(s.htmlContent)
+
+	data := web.WaitingRoomData{
+		EventTitle:   s.eventTitle,
+		BrandLogoURL: s.brandLogoURL,
+		ThemeColor:   s.themeColor,
+		Announcement: s.announcement,
+		RoomID:       targetRoom.ID(),
+		RoomName:     targetRoom.Name(),
+	}
+	renderedHTML, err := web.RenderWaitingRoom(s.templatePath, data)
+	if err != nil {
+		renderedHTML = s.htmlContent
+	}
+	_, _ = w.Write(renderedHTML)
 }
 
-func (s *Server) hasValidTicket(r *http.Request) bool {
+func (s *Server) hasValidTicket(r *http.Request, roomID string) bool {
 	sessionCookie, err := r.Cookie(CookieSession)
 	if err != nil || sessionCookie.Value == "" {
 		return false
@@ -334,7 +405,7 @@ func (s *Server) hasValidTicket(r *http.Request) bool {
 		if token == "" {
 			continue
 		}
-		ticket, err := s.signer.VerifyWithDevice(token, devHash)
+		ticket, err := s.signer.VerifyWithRoom(token, devHash, roomID)
 		if err == nil && subtle.ConstantTimeCompare([]byte(ticket.SessionID), []byte(sessionCookie.Value)) == 1 {
 			return true
 		}
@@ -383,19 +454,28 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
+	targetRoom := s.waitingRoom
+	if roomParam := r.URL.Query().Get("room"); roomParam != "" && s.roomManager != nil {
+		if rm, ok := s.roomManager.Get(roomParam); ok {
+			targetRoom = rm
+		}
+	}
+
 	if sessionID == "" {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"queue_depth": s.waitingRoom.Sequence().QueueDepth(),
-			"last_issued": s.waitingRoom.Sequence().LastIssued(),
-			"admitted":    s.waitingRoom.Sequence().Admitted(),
-			"rate":        s.waitingRoom.GetDischargeRate(),
-			"paused":      s.waitingRoom.IsPaused(),
-			"bypass":      s.waitingRoom.IsBypass(),
+			"room":        targetRoom.ID(),
+			"room_name":   targetRoom.Name(),
+			"queue_depth": targetRoom.Sequence().QueueDepth(),
+			"last_issued": targetRoom.Sequence().LastIssued(),
+			"admitted":    targetRoom.Sequence().Admitted(),
+			"rate":        targetRoom.GetDischargeRate(),
+			"paused":      targetRoom.IsPaused(),
+			"bypass":      targetRoom.IsBypass(),
 		})
 		return
 	}
 
-	admitted, pos, estSec, _, err := s.waitingRoom.CheckStatus(sessionID)
+	admitted, pos, estSec, _, err := targetRoom.CheckStatus(sessionID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
@@ -403,6 +483,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
+		"room":        targetRoom.ID(),
+		"room_name":   targetRoom.Name(),
 		"session_id":  sessionID,
 		"admitted":    admitted,
 		"position":    pos,

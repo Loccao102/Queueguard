@@ -82,6 +82,12 @@ flowchart TD
     * Máy chủ gốc có thể chủ động trả về response header `X-QueueGuard-Extend: 5m` khi người dùng đang thực hiện thanh toán/checkout, tự động làm mới TTL vé an toàn.
 14. **Chuông Báo Âm Thanh & Thông Báo Desktop (Web Audio & Notifications)**:
     * Hàng chờ tích hợp Web Audio API tự tổng hợp chuông báo âm thanh nhẹ nhàng cùng Web Notification API nhắc nhở người dùng ngay khi đến lượt mà không cần tài nguyên âm thanh ngoài.
+15. **Quản Lý Đa Phòng Chờ Độc Lập (Multi-Waiting Room Engine)**:
+    * Định tuyến linh hoạt nhiều phòng chờ theo tiền tố URL (`ROOMS_CONFIG`). Mỗi phòng chờ vận hành độc lập về số thứ tự, tốc độ xả và cách ly mật mã chữ ký vé.
+16. **Tùy Biến Giao Diện Thương Hiệu (Whitelabel Theming & Custom HTML)**:
+    * Dễ dàng tùy biến tiêu đề sự kiện, logo thương hiệu, màu sắc chủ đạo, thông báo ban tổ chức hoặc nhúng trọn bộ giao diện HTML riêng (`WAITING_ROOM_TEMPLATE_PATH`).
+17. **Sẵn Sàng Cho Cloud Native: Grafana Dashboard & Kubernetes Helm Chart**:
+    * Cung cấp sẵn template `deploy/grafana/dashboard.json` 1-click import trực quan hóa toàn diện và bộ Helm Chart `deploy/helm/queueguard` chuẩn production kèm HPA autoscaling.
 
 ---
 
@@ -216,6 +222,12 @@ go run ./scripts/benchmark.go -url http://localhost:8000 -users 1000 -concurrenc
 | `REDIS_URL` | `""` | Địa chỉ Redis để chạy cụm phân tán nhiều container (vd: `localhost:6379`) |
 | `BIND_DEVICE` | `true` | Ràng buộc chữ ký vé với User-Agent & IP client để chống mua bán cookie |
 | `POW_DIFFICULTY` | `0` | Độ khó giải bài toán Proof-of-Work SHA-256 (0: tắt, 3-4: chống bot cao) |
+| `ROOMS_CONFIG` | `""` | Cấu hình đa phòng chờ độc lập (vd: `vip:/tickets/vip:5,general:/tickets:30`) |
+| `WAITING_ROOM_TEMPLATE_PATH` | `""` | Đường dẫn file HTML tùy biến giao diện phòng chờ riêng |
+| `EVENT_TITLE` | `"Bạn Đang Trong Hàng Chờ"` | Tiêu đề sự kiện hiển thị trên phòng chờ |
+| `BRAND_LOGO_URL` | `""` | URL ảnh logo thương hiệu nhúng vào đầu thẻ phòng chờ |
+| `THEME_COLOR` | `"#06b6d4"` | Mã màu chủ đạo (Hex/CSS) của giao diện phòng chờ |
+| `ANNOUNCEMENT_TEXT` | `""` | Thông báo nổi bật từ ban tổ chức gửi tới người đang chờ |
 
 ---
 

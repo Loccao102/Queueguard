@@ -716,3 +716,129 @@ func TestPoWEnforcementInProxy(t *testing.T) {
 		t.Fatalf("expected 200 OK after solving PoW, got: %d", resp2.StatusCode)
 	}
 }
+
+func TestMultiRoomProxyRouting(t *testing.T) {
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Origin-Hit", "true")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("origin response"))
+	}))
+	defer originServer.Close()
+
+	secret := "secret-12345"
+	signer := crypto.NewSigner(secret, 10*time.Minute)
+
+	defCfg := queue.DefaultConfig()
+	defCfg.RoomID = "default"
+	defaultRoom := queue.NewWaitingRoom(defCfg, signer)
+
+	vipCfg := queue.DefaultConfig()
+	vipCfg.RoomID = "vip"
+	vipCfg.Name = "VIP Lounge"
+	vipRoom := queue.NewWaitingRoom(vipCfg, signer)
+
+	genCfg := queue.DefaultConfig()
+	genCfg.RoomID = "general"
+	genCfg.Name = "General Admission"
+	genRoom := queue.NewWaitingRoom(genCfg, signer)
+
+	rm := queue.NewRoomManager(defaultRoom)
+	_ = rm.Register(queue.RoomDefinition{ID: "vip", Name: "VIP Lounge", PathPrefix: "/tickets/vip"}, vipRoom)
+	_ = rm.Register(queue.RoomDefinition{ID: "general", Name: "General Admission", PathPrefix: "/tickets"}, genRoom)
+
+	proxyServer, err := NewServer(
+		originServer.URL,
+		defaultRoom,
+		signer,
+		WithRoomManager(rm),
+		WithBranding("Mega Concert", "https://example.com/logo.png", "#10b981", "Welcome!"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	// 1. Request to /tickets/vip should be governed by VIP room
+	respVIP, err := client.Get(proxyHTTP.URL + "/tickets/vip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomHdr := respVIP.Header.Get("X-QueueGuard-Room")
+	respVIP.Body.Close()
+	if roomHdr != "vip" {
+		t.Fatalf("expected X-QueueGuard-Room to be 'vip', got: '%s'", roomHdr)
+	}
+
+	// 2. Request to /tickets/general should be governed by general room
+	respGen, err := client.Get(proxyHTTP.URL + "/tickets/general")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomHdrGen := respGen.Header.Get("X-QueueGuard-Room")
+	respGen.Body.Close()
+	if roomHdrGen != "general" {
+		t.Fatalf("expected X-QueueGuard-Room to be 'general', got: '%s'", roomHdrGen)
+	}
+
+	// 3. Request to /contact should fallback to default room
+	respDef, err := client.Get(proxyHTTP.URL + "/contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomHdrDef := respDef.Header.Get("X-QueueGuard-Room")
+	respDef.Body.Close()
+	if roomHdrDef != "default" {
+		t.Fatalf("expected X-QueueGuard-Room to be 'default', got: '%s'", roomHdrDef)
+	}
+
+	// 4. Admin rooms API should report all registered rooms
+	reqAdmin, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/queueguard/api/admin/rooms", nil)
+	reqAdmin.Header.Set("X-Admin-Token", "queueguard-admin-secret")
+	respAdmin, err := client.Do(reqAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respAdmin.Body.Close()
+	if respAdmin.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /queueguard/api/admin/rooms, got: %d", respAdmin.StatusCode)
+	}
+	var adminRooms struct {
+		Rooms []map[string]any `json:"rooms"`
+	}
+	if err := json.NewDecoder(respAdmin.Body).Decode(&adminRooms); err != nil {
+		t.Fatal(err)
+	}
+	if len(adminRooms.Rooms) != 3 {
+		t.Fatalf("expected 3 rooms in admin API, got: %d", len(adminRooms.Rooms))
+	}
+
+	// 5. Test Room Cryptographic Isolation:
+	// A ticket issued for "vip" cannot bypass the "general" waiting room!
+	sessionID := "user-room-test"
+	tokenVIP, _, err := signer.IssueWithRoom(sessionID, 1, "", "vip")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reqWithVIPTicket, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/tickets/general", nil)
+	reqWithVIPTicket.AddCookie(&http.Cookie{Name: CookieSession, Value: sessionID})
+	reqWithVIPTicket.AddCookie(&http.Cookie{Name: CookieTicket, Value: tokenVIP})
+
+	respCheck, err := client.Do(reqWithVIPTicket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respCheck.Body.Close()
+
+	// Should be caught in the general waiting room, NOT forwarded to origin!
+	if respCheck.Header.Get("X-Origin-Hit") == "true" {
+		t.Fatal("VIP ticket should NOT be accepted for General room URL!")
+	}
+	if respCheck.Header.Get("X-QueueGuard-Room") != "general" {
+		t.Fatalf("expected to be queued in general room, got: %s", respCheck.Header.Get("X-QueueGuard-Room"))
+	}
+}
+
