@@ -52,6 +52,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		s.handleAdminBypass(w, r)
 	case "/queueguard/api/admin/reset":
 		s.handleAdminReset(w, r)
+	case "/queueguard/api/admin/event-time":
+		s.handleAdminEventTime(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -89,6 +91,11 @@ func (s *Server) authorizeAdmin(r *http.Request) bool {
 }
 
 func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	preQueueCount := 0
+	if pq := s.waitingRoom.PreQueue(); pq != nil {
+		preQueueCount = pq.Count()
+	}
+
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"queue_depth":     s.waitingRoom.Sequence().QueueDepth(),
 		"last_issued":     s.waitingRoom.Sequence().LastIssued(),
@@ -96,9 +103,46 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		"rate":            s.waitingRoom.GetDischargeRate(),
 		"paused":          s.waitingRoom.IsPaused(),
 		"bypass":          s.waitingRoom.IsBypass(),
+		"is_prequeue":     s.waitingRoom.IsPreQueue(),
+		"prequeue_count":  preQueueCount,
 		"active_sessions": s.waitingRoom.ActiveSessionsCount(),
 		"subscribers":     s.waitingRoom.SubscribersCount(),
 		"uptime_seconds":  int64(time.Since(s.startTime).Seconds()),
+	})
+}
+
+func (s *Server) handleAdminEventTime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var targetTime time.Time
+	if inSec := r.URL.Query().Get("seconds"); inSec != "" {
+		if sec, err := strconv.Atoi(inSec); err == nil && sec > 0 {
+			targetTime = time.Now().Add(time.Duration(sec) * time.Second)
+		}
+	} else {
+		var payload struct {
+			StartTime string `json:"start_time"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err == nil && payload.StartTime != "" {
+			if parsed, err := time.Parse(time.RFC3339, payload.StartTime); err == nil {
+				targetTime = parsed
+			}
+		}
+	}
+
+	if targetTime.IsZero() {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "valid start_time (RFC3339) or seconds parameter required"})
+		return
+	}
+
+	s.waitingRoom.SetEventStartTime(targetTime)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"message":    "pre-queue event start time updated",
+		"start_time": targetTime.Format(time.RFC3339),
 	})
 }
 

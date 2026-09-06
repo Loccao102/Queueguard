@@ -61,6 +61,11 @@ func (sc *SequenceController) SetAdmitted(val uint64) {
 	atomic.StoreUint64(&sc.admitted, val)
 }
 
+// SetLastIssued forces the last issued counter to a specific value (e.g., after pre-queue lottery).
+func (sc *SequenceController) SetLastIssued(val uint64) {
+	atomic.StoreUint64(&sc.lastIssued, val)
+}
+
 // QueueDepth returns the current number of people waiting in line.
 func (sc *SequenceController) QueueDepth() uint64 {
 	lastIssued := atomic.LoadUint64(&sc.lastIssued)

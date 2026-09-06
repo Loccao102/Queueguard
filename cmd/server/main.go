@@ -33,6 +33,7 @@ func main() {
 	wrCfg := queue.DefaultConfig()
 	wrCfg.DischargeRatePerSec = cfg.DischargeRatePerSec
 	wrCfg.TicketTTL = cfg.TicketTTL
+	wrCfg.EventStartTime = cfg.EventStartTime
 	waitingRoom := queue.NewWaitingRoom(wrCfg, signer)
 
 	// Initialize IP Rate Limiter

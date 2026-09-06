@@ -222,6 +222,29 @@
         try {
           const data = JSON.parse(e.data);
           
+          if (data.is_prequeue) {
+            document.querySelector('.badge').innerHTML = '<span class="badge-dot" style="background: var(--warn);"></span> PHÒNG CHỜ SỚM — XỔ SỐ CÔNG BẰNG';
+            document.querySelector('h1').innerText = 'Sự Kiện Sắp Bắt Đầu!';
+            document.querySelector('.desc').innerText = 'Bạn đang ở trong phòng chờ sớm. Đúng giờ mở bán, hệ thống sẽ tự động quay số ngẫu nhiên công bằng (Fair Lottery) cho tất cả mọi người.';
+            document.querySelectorAll('.stat-label')[0].innerText = 'Trạng Thái';
+            positionEl.innerText = 'Chờ Mở';
+            document.querySelectorAll('.stat-label')[1].innerText = 'Mở Bán Sau';
+            
+            const secs = data.est_seconds || 0;
+            const m = Math.floor(secs / 60).toString().padStart(2, '0');
+            const s = (secs % 60).toString().padStart(2, '0');
+            estWaitEl.innerText = `${m}:${s}`;
+            ticketNumberEl.innerText = 'Đang xếp lượt...';
+            progressBar.style.width = '15%';
+            return;
+          } else {
+            document.querySelector('.badge').innerHTML = '<span class="badge-dot"></span> Hàng Đợi Trực Tuyến Đang Hoạt Động';
+            document.querySelector('h1').innerText = 'Bạn Đang Trong Hàng Chờ';
+            document.querySelector('.desc').innerText = 'Hệ thống đang tiếp nhận lượng truy cập cao đột biến. Vui lòng giữ nguyên trang này, bạn sẽ tự động được chuyển hướng vào website ngay khi đến lượt.';
+            document.querySelectorAll('.stat-label')[0].innerText = 'Vị Trí Phía Trước';
+            document.querySelectorAll('.stat-label')[1].innerText = 'Thời Gian Ước Tính';
+          }
+
           if (data.ticket_number) {
             ticketNumberEl.innerText = '#' + data.ticket_number;
           }

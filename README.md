@@ -70,6 +70,10 @@ flowchart TD
    * Cung cấp số liệu thời gian thực theo định dạng chuẩn OpenMetrics/Prometheus (`queueguard_queue_depth`, `queueguard_admitted_tickets_total`, `queueguard_active_sessions`, `queueguard_sse_subscribers`) sẵn sàng kết nối Grafana.
 8. **Chống Spam & IP Rate Limiting (Token Bucket)**:
    * Tích hợp bộ lọc Token Bucket per IP bảo vệ phòng chờ khỏi các đợt bùng nổ bot cào tạo hàng triệu session ảo.
+9. **Phòng Chờ Sớm Đếm Ngược & Xổ Số Công Bằng (Pre-Queue & Fair Lottery Shuffle)**:
+   * Trước giờ mở bán, người dùng nhìn thấy đồng hồ đếm ngược (Pre-Queue). Đúng giờ mở bán, hệ thống tự động xáo trộn ngẫu nhiên (Fisher-Yates Shuffle) vị trí vé, triệt tiêu 100% tình trạng bot cắm trại cướp số 1 lúc 00:00:00.001.
+10. **Cụm Phân Tán Đa Node (Distributed Redis Engine Interface)**:
+    * Trừu tượng hóa `Engine` interface: chạy In-Memory (mặc định 0 dependency) hoặc Redis phân tán (khi có `REDIS_URL`) để scale ngang nhiều container QueueGuard sau Load Balancer.
 
 ---
 
@@ -200,6 +204,31 @@ go run ./scripts/benchmark.go -url http://localhost:8000 -users 1000 -concurrenc
 | `BYPASS_PATHS` | `""` | Danh sách định dạng/đường dẫn bỏ qua hàng chờ (vd: `.pdf,/api/webhooks/*`) |
 | `IP_RATE_LIMIT` | `60` | Giới hạn số lượt xin xếp hàng tối đa từ 1 IP trong 1 phút |
 | `IP_RATE_BURST` | `20` | Giới hạn lượng request dồn dập (burst) tối đa từ 1 IP |
+| `EVENT_START_TIME` | `""` | Thời gian mở bán sự kiện định dạng RFC3339 (kích hoạt Pre-Queue) |
+| `REDIS_URL` | `""` | Địa chỉ Redis để chạy cụm phân tán nhiều container (vd: `localhost:6379`) |
+
+---
+
+## 🛠️ Các Lệnh Tiện Ích Makefile
+
+Dự án tích hợp sẵn `Makefile` chuẩn hóa quy trình phát triển:
+
+```bash
+# Biên dịch binary cả hai service vào thư mục bin/
+make build
+
+# Chạy toàn bộ test suite
+make test
+
+# Chạy stress test tải cao 1,000 users
+make bench
+
+# Khởi chạy toàn bộ hệ thống bằng Docker Compose
+make docker-up
+
+# Dừng và dọn dẹp Docker Compose
+make docker-down
+```
 
 ---
 

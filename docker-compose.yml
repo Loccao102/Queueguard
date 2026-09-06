@@ -29,6 +29,8 @@ services:
       - BYPASS_PATHS=.css,.js,.png,.jpg,.jpeg,.gif,.svg,.ico,/favicon.ico,/robots.txt
       - IP_RATE_LIMIT=120
       - IP_RATE_BURST=30
+      - EVENT_START_TIME=
+      - REDIS_URL=
     depends_on:
       - mock-origin
     restart: unless-stopped

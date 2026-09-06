@@ -48,12 +48,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 		sess, _ := s.waitingRoom.Enroll(sessionID)
 
+		isPreQueue := s.waitingRoom.IsPreQueue()
 		payload := map[string]any{
 			"ticket_number": sess.TicketNumber,
 			"position":      pos,
 			"est_seconds":   estSec,
 			"admitted":      admitted,
 			"token":         token,
+			"is_prequeue":   isPreQueue,
 		}
 
 		data, _ := json.Marshal(payload)

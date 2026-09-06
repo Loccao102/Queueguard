@@ -35,6 +35,7 @@ type Config struct {
 	MaxQueueCapacity    uint64        // Maximum allowed in waiting room
 	TicketTTL           time.Duration // Time an admitted ticket remains valid on the origin
 	SessionIdleTimeout  time.Duration // Time before an inactive tab is considered abandoned
+	EventStartTime      time.Time     // Optional future event start time (activates Pre-Queue Lottery)
 }
 
 // DefaultConfig provides recommended baseline settings.
@@ -53,6 +54,7 @@ type WaitingRoom struct {
 	config   Config
 	sequence *SequenceController
 	signer   *crypto.Signer
+	preQueue *PreQueueManager
 
 	// sessions stores active queued sessions (sessionID -> *Session)
 	sessions sync.Map
@@ -79,6 +81,7 @@ func NewWaitingRoom(cfg Config, signer *crypto.Signer) *WaitingRoom {
 		config:      cfg,
 		sequence:    NewSequenceController(),
 		signer:      signer,
+		preQueue:    NewPreQueueManager(cfg.EventStartTime),
 		subscribers: make(map[chan struct{}]struct{}),
 	}
 }
@@ -89,6 +92,12 @@ func NewWaitingRoom(cfg Config, signer *crypto.Signer) *WaitingRoom {
 func (wr *WaitingRoom) Enroll(sessionID string) (*Session, bool) {
 	now := time.Now()
 
+	// Trigger lottery if event start time has arrived
+	if wr.preQueue != nil && wr.preQueue.ShouldTriggerLottery() {
+		wr.preQueue.ExecuteFairLottery(wr.sequence, &wr.sessions)
+		wr.notifySubscribers()
+	}
+
 	// Check if already in queue
 	if val, ok := wr.sessions.Load(sessionID); ok {
 		sess := val.(*Session)
@@ -97,7 +106,14 @@ func (wr *WaitingRoom) Enroll(sessionID string) (*Session, bool) {
 	}
 
 	// Atomically grab next ticket number
-	ticketNum := wr.sequence.NextTicket()
+	var ticketNum uint64
+	if wr.preQueue != nil && wr.preQueue.IsActive() {
+		ticketNum = 0 // Pending assignment upon fair lottery shuffle
+		wr.preQueue.Enroll(sessionID)
+	} else {
+		ticketNum = wr.sequence.NextTicket()
+	}
+
 	sess := &Session{
 		ID:            sessionID,
 		TicketNumber:  ticketNum,
@@ -129,6 +145,12 @@ func (wr *WaitingRoom) CheckStatus(sessionID string) (bool, uint64, int64, strin
 		return true, 0, 0, token, err
 	}
 
+	// Trigger lottery if event start time has arrived
+	if wr.preQueue != nil && wr.preQueue.ShouldTriggerLottery() {
+		wr.preQueue.ExecuteFairLottery(wr.sequence, &wr.sessions)
+		wr.notifySubscribers()
+	}
+
 	val, ok := wr.sessions.Load(sessionID)
 	if !ok {
 		return false, 0, 0, "", fmt.Errorf("session not found in waiting room")
@@ -137,10 +159,15 @@ func (wr *WaitingRoom) CheckStatus(sessionID string) (bool, uint64, int64, strin
 	sess := val.(*Session)
 	atomic.StoreInt64(&sess.LastHeartbeat, time.Now().UnixMilli())
 
+	// If pre-queue countdown is active, client must wait for event start
+	if wr.preQueue != nil && wr.preQueue.IsActive() {
+		return false, 0, wr.preQueue.SecondsUntilStart(), "", nil
+	}
+
 	admittedThreshold := wr.sequence.Admitted()
 
 	// Check if this ticket has been reached by the admission turnstile
-	if sess.TicketNumber <= admittedThreshold && atomic.LoadUint32(&wr.paused) == 0 {
+	if sess.TicketNumber > 0 && sess.TicketNumber <= admittedThreshold && atomic.LoadUint32(&wr.paused) == 0 {
 		sess.Status = StatusAdmitted
 		if sess.AdmissionToken == "" {
 			token, _, err := wr.signer.Issue(sess.ID, sess.TicketNumber)
@@ -153,7 +180,11 @@ func (wr *WaitingRoom) CheckStatus(sessionID string) (bool, uint64, int64, strin
 	}
 
 	// Still waiting
-	position := sess.TicketNumber - admittedThreshold
+	var position uint64
+	if sess.TicketNumber > admittedThreshold {
+		position = sess.TicketNumber - admittedThreshold
+	}
+
 	rate := atomic.LoadUint64(&wr.config.DischargeRatePerSec)
 	if rate == 0 {
 		rate = 1
@@ -181,6 +212,12 @@ func (wr *WaitingRoom) StartDischargeWorker(ctx context.Context) {
 			return
 
 		case <-ticker.C:
+			// Trigger lottery if event start time has arrived
+			if wr.preQueue != nil && wr.preQueue.ShouldTriggerLottery() {
+				wr.preQueue.ExecuteFairLottery(wr.sequence, &wr.sessions)
+				wr.notifySubscribers()
+			}
+
 			// If paused, do not advance turnstile
 			if atomic.LoadUint32(&wr.paused) == 1 {
 				continue
@@ -304,5 +341,26 @@ func (wr *WaitingRoom) Reset() {
 		wr.sessions.Delete(key)
 		return true
 	})
+	wr.preQueue = NewPreQueueManager(wr.config.EventStartTime)
 	wr.notifySubscribers()
+}
+
+// PreQueue returns the PreQueueManager.
+func (wr *WaitingRoom) PreQueue() *PreQueueManager {
+	return wr.preQueue
+}
+
+// SetEventStartTime updates or enables the pre-queue event start time.
+func (wr *WaitingRoom) SetEventStartTime(t time.Time) {
+	if wr.preQueue == nil {
+		wr.preQueue = NewPreQueueManager(t)
+	} else {
+		wr.preQueue.SetStartTime(t)
+	}
+	wr.notifySubscribers()
+}
+
+// IsPreQueue returns true if the pre-queue countdown is currently active.
+func (wr *WaitingRoom) IsPreQueue() bool {
+	return wr.preQueue != nil && wr.preQueue.IsActive()
 }

@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -394,5 +396,79 @@ func TestProxyIPRateLimiterEnforcement(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "rate_limited") {
 		t.Fatalf("expected rate_limited error message, got: %s", string(body))
+	}
+}
+
+func TestPreQueueCountdownAndFairLottery(t *testing.T) {
+	originServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer originServer.Close()
+
+	signer := crypto.NewSigner("secret-key", 5*time.Minute)
+	wrCfg := queue.DefaultConfig()
+	// Set start time 200ms into the future
+	wrCfg.EventStartTime = time.Now().Add(200 * time.Millisecond)
+	wr := queue.NewWaitingRoom(wrCfg, signer)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go wr.StartDischargeWorker(ctx)
+
+	proxyServer, _ := NewServer(originServer.URL, wr, signer)
+	proxyHTTP := httptest.NewServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	// 1. First user arrives during pre-queue
+	req, _ := http.NewRequest(http.MethodGet, proxyHTTP.URL+"/", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	var sessionCookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == CookieSession {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected session cookie to be set")
+	}
+
+	// In pre-queue, status should report pre-queue active
+	if !wr.IsPreQueue() {
+		t.Fatal("expected waiting room to be in pre-queue mode before start time")
+	}
+
+	// Query status
+	statusReq, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/queueguard/status?session_id=%s", proxyHTTP.URL, sessionCookie.Value), nil)
+	statusResp, err := client.Do(statusReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusData map[string]any
+	_ = json.NewDecoder(statusResp.Body).Decode(&statusData)
+	statusResp.Body.Close()
+
+	// Wait for event start time + discharge tick
+	time.Sleep(300 * time.Millisecond)
+
+	// Pre-queue should now be completed
+	if wr.IsPreQueue() {
+		t.Fatal("expected pre-queue mode to be completed after start time")
+	}
+
+	// After lottery, user should receive a valid ticket number
+	sess, isNew := wr.Enroll(sessionCookie.Value)
+	if isNew {
+		t.Fatal("expected existing session to be found")
+	}
+	if sess.TicketNumber == 0 {
+		t.Fatalf("expected assigned ticket number after lottery, got: %d", sess.TicketNumber)
 	}
 }

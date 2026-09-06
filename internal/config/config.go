@@ -17,6 +17,8 @@ type AppConfig struct {
 	BypassPaths         []string
 	IPRateLimit         int // requests per minute
 	IPRateBurst         int // maximum burst allowance
+	EventStartTime      time.Time
+	RedisURL            string
 }
 
 func Load() *AppConfig {
@@ -24,6 +26,14 @@ func Load() *AppConfig {
 	originURL := getEnv("ORIGIN_URL", "http://localhost:8080")
 	secretKey := getEnv("SECRET_KEY", "queueguard-dev-secret-key-change-me")
 	adminToken := getEnv("ADMIN_TOKEN", "queueguard-admin-secret")
+	redisURL := getEnv("REDIS_URL", "")
+
+	var eventStartTime time.Time
+	if timeStr := getEnv("EVENT_START_TIME", ""); timeStr != "" {
+		if parsed, err := time.Parse(time.RFC3339, timeStr); err == nil {
+			eventStartTime = parsed
+		}
+	}
 
 	rateStr := getEnv("DISCHARGE_RATE", "10")
 	rate, err := strconv.ParseUint(rateStr, 10, 64)
@@ -61,6 +71,8 @@ func Load() *AppConfig {
 		BypassPaths:         bypassPaths,
 		IPRateLimit:         ipLimit,
 		IPRateBurst:         ipBurst,
+		EventStartTime:      eventStartTime,
+		RedisURL:            redisURL,
 	}
 }
 
