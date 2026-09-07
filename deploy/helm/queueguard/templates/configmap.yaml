@@ -20,3 +20,4 @@ data:
   THEME_COLOR: {{ .Values.config.themeColor | quote }}
   ANNOUNCEMENT_TEXT: {{ .Values.config.announcementText | quote }}
   ROOMS_CONFIG: {{ .Values.config.roomsConfig | quote }}
+

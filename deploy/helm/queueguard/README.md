@@ -25,3 +25,4 @@ helm install queueguard ./deploy/helm/queueguard \
 | `config.powDifficulty` | `0` | Thử thách giải toán chống botnet |
 | `config.roomsConfig` | `""` | Cấu hình đa phòng chờ (id:prefix:rate) |
 | `config.themeColor` | `#06b6d4` | Màu sắc chủ đạo giao diện phòng chờ |
+

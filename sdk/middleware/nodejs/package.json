@@ -1,0 +1,17 @@
+{
+  "name": "@queueguard/middleware-node",
+  "version": "1.0.0",
+  "description": "Zero-dependency Node.js and Express Middleware for QueueGuard Ticket Verification",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "keywords": [
+    "queueguard",
+    "express",
+    "middleware",
+    "waiting-room",
+    "hmac-sha256",
+    "traffic-shaper"
+  ],
+  "author": "QueueGuard Team",
+  "license": "MIT"
+}

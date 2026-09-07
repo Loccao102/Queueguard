@@ -47,3 +47,4 @@ Selector labels
 app.kubernetes.io/name: {{ include "queueguard.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+

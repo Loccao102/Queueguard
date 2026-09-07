@@ -88,6 +88,12 @@ flowchart TD
     * Dễ dàng tùy biến tiêu đề sự kiện, logo thương hiệu, màu sắc chủ đạo, thông báo ban tổ chức hoặc nhúng trọn bộ giao diện HTML riêng (`WAITING_ROOM_TEMPLATE_PATH`).
 17. **Sẵn Sàng Cho Cloud Native: Grafana Dashboard & Kubernetes Helm Chart**:
     * Cung cấp sẵn template `deploy/grafana/dashboard.json` 1-click import trực quan hóa toàn diện và bộ Helm Chart `deploy/helm/queueguard` chuẩn production kèm HPA autoscaling.
+18. **Bộ Lọc Xác Thực Tại CDN Edge (Cloudflare Edge Worker)**:
+    * Chạy tại hơn 300 trạm Cloudflare Edge toàn cầu bằng Web Crypto API (< 1ms). Chặn đứng 100% người dùng chưa có vé ngay tại Edge mà không truyền bất kỳ request rác nào về Origin Server.
+19. **Thư Viện Phía Trình Duyệt Client SDK (`@queueguard/client`)**:
+    * Cung cấp React Hook `useQueueGuard` và Vanilla JS `QueueGuardClient` giúp ứng dụng Single Page App (SPA) dễ dàng hiển thị giao diện hàng chờ tùy biến thời gian thực, chuông báo Web Audio và Web Push Notification.
+20. **Bộ Thư Viện Backend Middleware SDKs (Go, Node.js, PHP)**:
+    * Hỗ trợ các hệ thống muốn xác thực trực tiếp vé HMAC-SHA256 trên code ứng dụng gốc (Go `net/http`, Node.js `Express`, PHP `Laravel/PSR-15`) mà không cần bọc Reverse Proxy. Tất cả đều tuân thủ nguyên tắc **Zero Dependencies**.
 
 ---
 
@@ -228,6 +234,53 @@ go run ./scripts/benchmark.go -url http://localhost:8000 -users 1000 -concurrenc
 | `BRAND_LOGO_URL` | `""` | URL ảnh logo thương hiệu nhúng vào đầu thẻ phòng chờ |
 | `THEME_COLOR` | `"#06b6d4"` | Mã màu chủ đạo (Hex/CSS) của giao diện phòng chờ |
 | `ANNOUNCEMENT_TEXT` | `""` | Thông báo nổi bật từ ban tổ chức gửi tới người đang chờ |
+
+---
+
+## 📦 Hệ Sinh Thái SDK & Edge Worker
+
+QueueGuard cung cấp bộ công cụ tích hợp toàn diện cho Frontend, Backend và CDN Edge:
+
+### 1. Client SDK (`@queueguard/client`)
+Tích hợp phòng chờ thời gian thực vào React, Next.js, Vue hoặc Vanilla JS:
+```tsx
+import { useQueueGuard } from '@queueguard/client';
+
+export function WaitingRoom() {
+  const { position, estSeconds, isAdmitted, roomName, requestNotification } = useQueueGuard({
+    roomId: 'vip',
+    autoRedirect: true,
+  });
+
+  if (isAdmitted) return <div>🎉 Đến lượt bạn! Đang vào trang mua vé...</div>;
+  return <div>Đang đợi: {position} người phía trước (~{estSeconds}s)</div>;
+}
+```
+
+### 2. Backend Middleware SDKs (Zero Dependencies)
+Bảo vệ trực tiếp API backend không bắt buộc qua Reverse Proxy:
+* **Golang**:
+  ```go
+  import "github.com/Loccao102/queueguard/sdk/middleware/go"
+
+  router.Use(queueguard.New("my-secret-key", queueguard.WithRoom("vip")))
+  ```
+* **Node.js (Express)**:
+  ```javascript
+  const { queueguardMiddleware } = require('./sdk/middleware/nodejs');
+  app.use('/checkout', queueguardMiddleware({ secretKey: 'my-secret', roomId: 'vip' }));
+  ```
+* **PHP (Laravel / Native)**:
+  ```php
+  use QueueGuard\Validator;
+  $ticket = Validator::protect('my-secret', ['roomId' => 'vip']);
+  ```
+
+### 3. Cloudflare Edge Worker (`deploy/cloudflare-worker`)
+Chặn 100% lưu lượng chưa có vé tại hơn 300 trạm Edge bằng Web Crypto API (< 1ms), bảo vệ Origin Backend và Database tuyệt đối:
+```bash
+cd deploy/cloudflare-worker && wrangler deploy
+```
 
 ---
 

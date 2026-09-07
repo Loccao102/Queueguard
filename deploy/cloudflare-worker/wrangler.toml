@@ -1,0 +1,7 @@
+name = "queueguard-edge-verifier"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+QUEUEGUARD_URL = "https://queue.example.com"
+SECRET_KEY = "queueguard-dev-secret-key-change-me"

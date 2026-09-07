@@ -841,4 +841,3 @@ func TestMultiRoomProxyRouting(t *testing.T) {
 		t.Fatalf("expected to be queued in general room, got: %s", respCheck.Header.Get("X-QueueGuard-Room"))
 	}
 }
-

@@ -395,4 +395,3 @@ func (wr *WaitingRoom) Name() string {
 func (wr *WaitingRoom) Config() Config {
 	return wr.config
 }
-

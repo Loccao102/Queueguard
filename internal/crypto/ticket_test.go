@@ -121,4 +121,3 @@ func TestRoomBinding(t *testing.T) {
 		t.Fatalf("expected empty room verification to pass, got err=%v", err)
 	}
 }
-

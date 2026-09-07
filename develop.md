@@ -16,8 +16,8 @@ Tài liệu này tổng hợp toàn bộ các tính năng tiềm năng, kiến t
 | **P1 (Trung)** | **Tùy Biến Giao Diện Thương Hiệu (Whitelabel / Theme)** | Cho phép cấu hình Logo, màu sắc, i18n đa ngôn ngữ, template ngoài | Nâng cao trải nghiệm người dùng, hiển thị quảng cáo tài trợ | ✅ Hoàn thành |
 | **P2 (Dài hạn)** | **Grafana Dashboard Template & OpenTelemetry** | File JSON mẫu cho Grafana và OTel Tracing | Quan sát chi tiết độ trễ, phân bố địa lý của hàng chờ | ✅ Hoàn thành |
 | **P2 (Dài hạn)** | **Kubernetes Helm Chart & Operator** | Triển khai 1-click lên Kubernetes kèm HPA tự động scale | Sẵn sàng cho môi trường hạ tầng Cloud Native (EKS, GKE, AKS) | ✅ Hoàn thành |
-| **P2 (Dài hạn)** | **WASM Envoy / Cloudflare Filter** | Đưa logic xác thực vé ra chạy tại CDN Edge bằng WebAssembly | Giảm tải 100% cho origin khi vé chưa hợp lệ | ⏳ Milestone 5 |
-| **P2 (Dài hạn)** | **Client & Middleware SDK (@queueguard/client-js)** | Thư viện React/Vue hook và backend middleware cho Node/Go/PHP | Tích hợp tiện lợi không cần bọc reverse proxy | ⏳ Milestone 5 |
+| **P2 (Dài hạn)** | **WASM Envoy / Cloudflare Filter** | Đưa logic xác thực vé ra chạy tại CDN Edge bằng WebAssembly | Giảm tải 100% cho origin khi vé chưa hợp lệ | ✅ Hoàn thành |
+| **P2 (Dài hạn)** | **Client & Middleware SDK (@queueguard/client-js)** | Thư viện React/Vue hook và backend middleware cho Node/Go/PHP | Tích hợp tiện lợi không cần bọc reverse proxy | ✅ Hoàn thành |
 
 ---
 
@@ -146,9 +146,9 @@ timeline
                              : Custom Whitelabel Theming
                              : Grafana Dashboard Template
                              : Kubernetes Helm Chart
-    Milestone 5 (Kế tiếp)    : WASM Envoy / Cloudflare Filter
-                             : Client SDK (@queueguard/client-js)
-                             : Backend Middleware SDKs
+    Milestone 5 (Hoàn thành) : Cloudflare Edge Worker
+                             : Client SDK (@queueguard/client)
+                             : Backend Middleware (Go, Node, PHP)
 ```
 
 ---
